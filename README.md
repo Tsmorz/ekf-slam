@@ -5,6 +5,6 @@
 ![ekf-localization](https://github.com/user-attachments/assets/c441e3ec-4151-473b-be20-dd3ba98de8b4)
 
 # setup
-1. `make init`
-2. `make format`
-3. `make test`
+1. `task init`
+2. `task format`
+3. `task test`

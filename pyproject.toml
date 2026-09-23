@@ -1,27 +1,32 @@
-[tool.poetry]
+[project]
 name = "ekf_slam_3d"
 version = "0.1.0"
 description = "An extended Kalman filter for SLAM and localization."
-authors = ["Tsmorz <tonysmoragiewicz@gmail.com>"]
+authors = [{ name = "Tsmorz", email = "tonysmoragiewicz@gmail.com" }]
 readme = "README.md"
-package-mode = true
+requires-python = ">=3.13,<4.0"
+dependencies = [
+    "numpy>=2.2.3,<3",
+    "scipy>=1.15.2,<2",
+    "loguru>=0.7.3,<0.8",
+    "matplotlib>=3.10.1,<4",
+    "sympy>=1.13.3,<2",
+    "autograd>=1.7.0,<2",
+]
 
-[tool.poetry.dependencies]
-python = "^3.13"
-numpy = "^2.2.3"
-scipy = "^1.15.2"
-pytest = "^8.3.5"
-pytest-cov = "^6.0.0"
-loguru = "^0.7.3"
-pre-commit = "^4.1.0"
-matplotlib = "^3.10.1"
-sympy = "^1.13.3"
-autograd = "^1.7.0"
-
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5,<9",
+    "pytest-cov>=6.0.0,<7",
+    "pre-commit>=4.1.0,<5",
+]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ekf_slam_3d"]
 
 [tool.ruff]
 # Set the maximum allowed line length (PEP 8 default is 88)

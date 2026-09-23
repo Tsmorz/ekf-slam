@@ -1,0 +1,33 @@
+version: "3"
+
+tasks:
+  init:
+    desc: Install dependencies and create the virtual environment
+    cmds:
+      - uv sync
+      - echo "Created virtual environment"
+
+  test:
+    desc: Run the test suite with coverage
+    cmds:
+      - uv run pytest --cov=ekf_slam_3d/ --cov-report=term-missing --no-cov-on-fail
+
+  format:
+    desc: Format, lint, and type-check the code
+    cmds:
+      - uv run ruff format
+      - uv run ruff check --fix
+      - uv run mypy ekf_slam_3d/ tests/ config/ examples/ --ignore-missing-imports
+
+  clean:
+    desc: Remove the virtual environment, caches, and build artifacts
+    cmds:
+      - rm -rf .venv
+      - rm -rf .mypy_cache
+      - rm -rf .pytest_cache
+      - rm -rf .ruff_cache
+      - rm -rf build/
+      - rm -rf dist/
+      - rm -rf juninit-pytest.xml
+      - find . -name ".coverage*" -delete
+      - find . -name "__pycache__" -exec rm -r {} +
