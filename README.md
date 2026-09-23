@@ -15,7 +15,7 @@ that share the same filter and sensor-model code:
 | Mapping     | known     | unknown   | landmark positions, from sightings taken along a known trajectory |
 | SLAM        | unknown   | unknown   | pose **and** map together, from sightings alone     |
 
-Every pipeline is checked against a seeded, synthetic dataset in the test suite
+Every pipeline is checked against seeded, synthetic datasets in the test suite
 (`task test`), so the numbers below aren't just eyeballed off a plot - they're asserted
 in CI on every change:
 
@@ -23,11 +23,32 @@ in CI on every change:
 |-------------|----------------------:|--------------------------------------:|
 | Localization| < 1.0 m               | n/a (map is known)                    |
 | Mapping     | n/a (pose is known)   | < 0.05 m / < 0.1 m                    |
-| SLAM        | < 1.0 m               | < 0.5 m / < 1.0 m                     |
+| SLAM        | < 1.0 m               | < 0.5 m / < 1.0 m (sparse: < 2 m / < 3 m) |
 
-(these are the tolerances enforced in `tests/examples_tests/`; a typical run lands well
-inside them - e.g. the SLAM pipeline's seeded test run lands around 0.2 m for both pose
-and landmark error)
+(these are the tolerances enforced in `tests/examples_tests/`)
+
+### SLAM datasets
+
+In the SLAM pipeline the robot only sees landmarks within `SENSOR_RANGE` (10 m), so the
+map is discovered as it drives, and it steers around its loop using its own pose
+estimate. Each dataset in `examples/slam_scenarios.py` is built to catch a different kind
+of bug:
+
+| Scenario     | What it stresses | Known at start | Final pose error | Mean landmark error (first sighting -> end) |
+|--------------|------------------|---------------:|-----------------:|--------------------------------------------:|
+| `baseline`   | counterclockwise loops in a ring of 12 landmarks | 3 / 12 | 0.02 m | 0.62 -> 0.24 m |
+| `clockwise`  | turning/bearing handedness | 3 / 12 | 0.03 m | 0.26 -> 0.16 m |
+| `branch_cut` | yaw and bearings on the +-pi atan2 branch cut | 2 / 12 | 0.01 m | 0.21 -> 0.14 m |
+| `long_run`   | 10 loops, so yaw grows to dozens of radians | 3 / 12 | 0.32 m | 0.62 -> 0.16 m |
+| `sparse`     | stretches with nothing in view, then loop closure | 2 / 6 | 0.02 m | 1.31 -> 0.89 m |
+| `dense`      | 24 landmarks, many in view at once | 5 / 24 | 0.01 m | 0.14 -> 0.02 m |
+| `offset_map` | the whole world far from the origin | 3 / 12 | 0.02 m | 0.62 -> 0.24 m |
+
+For every dataset the tests check that the map is discovered progressively, that the
+pose and map stay accurate, that the map's shape is right, and that yaw never jumps
+between steps. They also check that the filter is never overconfident about a landmark,
+and that every landmark keeps improving after it's first seen. Moving the whole world
+must not change any error.
 
 # controls example
 ![controls-example](https://github.com/user-attachments/assets/f2abb831-2cf8-4599-95b8-127963a9e981)
@@ -80,6 +101,12 @@ it numerically linearizes both on every `predict()`/`update()` call. The mapping
 SLAM pipelines are built from the exact same filter, just with different state layouts
 and measurement functions - see `ekf_slam_3d/data_classes/sensors.py`.
 
+`update()` optionally takes a `MeasurementSpec` with the measurement's covariance, and
+a mask of which entries are angles (so bearings are compared modulo 2*pi).
+`initialize_from_measurement()` adds a new landmark to the state from its first
+sighting. It keeps the landmark's correlation with the pose it was seen from, so later
+corrections to the pose also correct the map.
+
 ## Run the live demos
 
 The example pipelines (with live plots) aren't part of the installed package, so clone
@@ -99,10 +126,25 @@ uv run python examples/ekf_mapping_example.py        # map only, pose known
 uv run python examples/ekf_slam_example.py           # pose + map, both unknown
 ```
 
+or with the demo tasks:
+
+```bash
+task demo:localization
+task demo:mapping
+task demo:slam                           # also just `task demo`
+task demo:slam -- --scenario clockwise   # any dataset from the table above
+```
+
+Each of these opens a live pyqtgraph window, so they need a real display - run them
+locally rather than in a headless environment. The view grows to fit the robot and
+whatever is known about the map, then stays put. Estimated landmarks (green `+`) are
+drawn with their 2-sigma uncertainty ellipses, which shrink as they're re-observed.
+
 ## Development
 
 ```bash
 task init    # uv sync
+task demo    # run the SLAM demo (see also demo:slam, demo:mapping, demo:localization)
 task format  # ruff format, ruff check --fix, mypy
 task test    # pytest with coverage
 task clean   # remove .venv, caches, build/dist artifacts

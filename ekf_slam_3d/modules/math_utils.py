@@ -112,6 +112,20 @@ def matrix_exponential(matrix: np.ndarray, t: float = 1.0) -> np.ndarray:
     return matrix_exp.real
 
 
+def wrap_to_pi[T: (np.ndarray, float)](angle: T) -> T:
+    """Wrap an array of angles (radians) into the range [-pi, pi).
+
+    Used to correct EKF innovations for angle-valued measurements (e.g. azimuth,
+    elevation): a small true bearing error can appear as a ~2*pi raw difference when
+    the measured and predicted angles fall on opposite sides of the atan2 branch cut,
+    which would otherwise be treated as a huge, spurious correction.
+
+    :param angle: array of angles in radians
+    :return: angles wrapped to (-pi, pi]
+    """
+    return (angle + np.pi) % (2 * np.pi) - np.pi
+
+
 def symmetrize_matrix(matrix: np.ndarray) -> np.ndarray:
     """Symmetrize a matrix.
 

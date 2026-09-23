@@ -143,6 +143,40 @@ def measure_distance_azimuth(
     return np.reshape(merged, (len(merged), 1))
 
 
+def distance_azimuth_covariance(readings: np.ndarray, noise: float) -> np.ndarray:
+    """Return the covariance of the noise `measure_distance_azimuth` adds to `readings`.
+
+    `noise` is a standard deviation: distance gets `noise`, and azimuth gets
+    `noise / (1 + distance)`.
+
+    :param readings: stacked [distance, azimuth] pairs
+    :param noise: the noise scale passed to `measure_distance_azimuth`
+    :return: diagonal covariance matching the simulated sensor
+    """
+    variances = np.empty(len(readings))
+    variances[0::2] = noise**2
+    variances[1::2] = (noise / (1 + readings[0::2, 0])) ** 2
+    return np.diag(variances)
+
+
+def angle_mask(length: int, stride: int, offsets: tuple[int, ...]) -> np.ndarray:
+    """Build a boolean mask marking the angle-valued entries of an interleaved measurement.
+
+    Passed as `MeasurementSpec.angle_mask` to `ExtendedKalmanFilter.update()` so
+    azimuth/elevation innovations get wrapped to [-pi, pi) instead of the raw
+    (possibly ~2*pi) difference.
+
+    :param length: total length of the measurement vector
+    :param stride: number of values per group (e.g. 2 for [distance, azimuth] pairs)
+    :param offsets: positions within each group that are angle-valued (e.g. (1,) for azimuth)
+    :return: boolean mask, True at angle-valued indices
+    """
+    mask = np.zeros(length, dtype=bool)
+    for offset in offsets:
+        mask[offset::stride] = True
+    return mask
+
+
 def initialize_landmark_estimate(
     pose: SE3, distance: float, azimuth: float
 ) -> tuple[float, float]:
@@ -161,6 +195,53 @@ def initialize_landmark_estimate(
     x = pose.x + distance * np.cos(heading)
     y = pose.y + distance * np.sin(heading)
     return x, y
+
+
+def inverse_distance_azimuth_slam(state_measurement: np.ndarray) -> np.ndarray:
+    """Inverse range-azimuth model for SLAM: [pose(6); landmarks; distance; azimuth] -> (x, y).
+
+    Reads the pose from the state so `ExtendedKalmanFilter.initialize_from_measurement`
+    can differentiate the seeded landmark with respect to the pose it was sighted from.
+
+    :param state_measurement: SLAM state stacked with a single [distance; azimuth] sighting
+    :return: (2, 1) landmark position estimate in the global frame
+    """
+    pose = state_to_se3(state_measurement[0:6, 0])
+    distance, azimuth = state_measurement[-2, 0], state_measurement[-1, 0]
+    x, y = initialize_landmark_estimate(pose, distance, azimuth)
+    return np.array([[x], [y]])
+
+
+def inverse_distance_azimuth_map(
+    state_measurement: np.ndarray, args: tuple[SE3]
+) -> np.ndarray:
+    """Inverse range-azimuth model for mapping with a known pose: sighting -> (x, y).
+
+    :param state_measurement: landmark state stacked with a single [distance; azimuth]
+    :param args: (observer pose,)
+    :return: (2, 1) landmark position estimate in the global frame
+    """
+    (pose,) = args
+    distance, azimuth = state_measurement[-2, 0], state_measurement[-1, 0]
+    x, y = initialize_landmark_estimate(pose, distance, azimuth)
+    return np.array([[x], [y]])
+
+
+def features_in_range(
+    pose: SE3, features: list[Feature], max_range: float
+) -> list[int]:
+    """Return the ids of the features within `max_range` (planar) of the pose.
+
+    :param pose: the observer pose
+    :param features: candidate features
+    :param max_range: sensing range
+    :return: ids of the visible features
+    """
+    return [
+        feature.id
+        for feature in features
+        if np.hypot(feature.x - pose.x, feature.y - pose.y) <= max_range
+    ]
 
 
 def _landmark_xy(

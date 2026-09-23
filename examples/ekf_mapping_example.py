@@ -3,19 +3,26 @@
 import numpy as np
 from loguru import logger
 
-from config.definitions import LANDMARK_INIT_VARIANCE, LOG_DECIMALS, MEASUREMENT_NOISE
+from config.definitions import (
+    CONTROL_NOISE_COVARIANCE,
+    LANDMARK_INIT_VARIANCE,
+    LOG_DECIMALS,
+    MEASUREMENT_NOISE,
+)
 from ekf_slam_3d.data_classes.lie_algebra import SE3
-from ekf_slam_3d.data_classes.map import Feature, Map, make_box_map_planar
+from ekf_slam_3d.data_classes.map import Map, make_box_map_planar
 from ekf_slam_3d.data_classes.sensors import (
-    initialize_landmark_estimate,
+    angle_mask,
+    distance_azimuth_covariance,
+    inverse_distance_azimuth_map,
     measure_distance_azimuth,
     measure_distance_azimuth_map,
     step_dynamics,
     step_dynamics_map,
 )
 from ekf_slam_3d.modules.controller import get_angular_velocities_for_box
-from ekf_slam_3d.modules.kalman_extended import ExtendedKalmanFilter
-from ekf_slam_3d.modules.simulators import SlamSimulator
+from ekf_slam_3d.modules.kalman_extended import ExtendedKalmanFilter, MeasurementSpec
+from ekf_slam_3d.modules.simulators import LandmarkEstimate, SlamSimulator
 from ekf_slam_3d.modules.state_space import StateSpaceNonlinear
 
 
@@ -47,9 +54,10 @@ def pipeline(
     # the ground-truth pose is driven directly - the mapping EKF never sees it perturbed
     sim = SlamSimulator(
         state_space_nl=StateSpaceNonlinear(motion_model=step_dynamics),
-        process_noise=np.array([[0.2, 0.0], [0.0, 0.04]]),
+        process_noise=CONTROL_NOISE_COVARIANCE,
         initial_pose=SE3(xyz=np.array([10.0, 10.0, 0.0])),
         sim_map=true_map,
+        map_known=False,
     )
 
     controls = get_angular_velocities_for_box(steps=60, radius_steps=8) * num_loops
@@ -70,12 +78,16 @@ def pipeline(
                 noise=MEASUREMENT_NOISE,
             )
             for k, feature_id in enumerate(new_ids):
-                dist, azi = sightings[2 * k, 0], sightings[2 * k + 1, 0]
-                x0, y0 = initialize_landmark_estimate(true_pose, dist, azi)
-                ekf.x[2 * feature_id, 0] = x0
-                ekf.x[2 * feature_id + 1, 0] = y0
-                idx = 2 * feature_id
-                ekf.cov[idx : idx + 2, idx : idx + 2] = MEASUREMENT_NOISE * np.eye(2)
+                sighting = sightings[2 * k : 2 * k + 2]
+                ekf.initialize_from_measurement(
+                    idx=2 * feature_id,
+                    z=sighting,
+                    inverse_model=inverse_distance_azimuth_map,
+                    model_args=(true_pose,),
+                    measurement_covariance=distance_azimuth_covariance(
+                        sighting, MEASUREMENT_NOISE
+                    ),
+                )
             seen.update(new_ids)
 
         observed = sorted(seen - set(new_ids))
@@ -91,17 +103,24 @@ def pipeline(
                 sensor=measure_distance_azimuth_map,
                 u=np.zeros((1, 1)),
                 measurement_args=(true_pose, observed, num_features),
+                spec=MeasurementSpec(
+                    covariance=distance_azimuth_covariance(meas, MEASUREMENT_NOISE),
+                    angle_mask=angle_mask(len(meas), stride=2, offsets=(1,)),
+                ),
             )
 
-        estimated_features = [
-            Feature(id=i, x=float(ekf.x[2 * i, 0]), y=float(ekf.x[2 * i + 1, 0]))
-            for i in sorted(seen)
-        ]
         sim.append_result(
             estimate=(true_pose, 1e-6 * np.eye(6)),
             measurement=meas,
             show_plot=show_plot,
-            estimated_features=estimated_features,
+            landmarks=[
+                LandmarkEstimate(
+                    x=float(ekf.x[2 * i, 0]),
+                    y=float(ekf.x[2 * i + 1, 0]),
+                    covariance=ekf.cov[2 * i : 2 * i + 2, 2 * i : 2 * i + 2],
+                )
+                for i in sorted(seen)
+            ],
             measurement_stride=2,
         )
 

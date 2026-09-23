@@ -4,15 +4,14 @@ import numpy as np
 from loguru import logger
 
 from config.definitions import (
+    CONTROL_NOISE_COVARIANCE,
     LOG_DECIMALS,
     MEASUREMENT_NOISE,
-    SIGMA_OMEGA,
-    SIGMA_VEL,
 )
 from ekf_slam_3d.data_classes.lie_algebra import SE3, state_to_se3
 from ekf_slam_3d.data_classes.map import make_random_map_planar
-from ekf_slam_3d.data_classes.sensors import Sensor, step_dynamics
-from ekf_slam_3d.modules.kalman_extended import ExtendedKalmanFilter
+from ekf_slam_3d.data_classes.sensors import Sensor, angle_mask, step_dynamics
+from ekf_slam_3d.modules.kalman_extended import ExtendedKalmanFilter, MeasurementSpec
 from ekf_slam_3d.modules.simulators import SlamSimulator
 from ekf_slam_3d.modules.state_space import StateSpaceNonlinear
 
@@ -31,12 +30,11 @@ def pipeline(
     robot_pose.x = 20
     meas = np.array([])
 
-    process_noise = np.array([[SIGMA_VEL, 0], [0, SIGMA_OMEGA]])
     ekf = ExtendedKalmanFilter(
         state_space_nonlinear=StateSpaceNonlinear(motion_model=step_dynamics),
         initial_x=robot_pose.as_vector(),
         initial_covariance=0.1 * np.eye(robot_pose.as_vector().shape[0]),
-        process_noise=process_noise,
+        process_noise=CONTROL_NOISE_COVARIANCE,
         measurement_noise=MEASUREMENT_NOISE,
     )
 
@@ -68,6 +66,9 @@ def pipeline(
                 sensor=Sensor.DIST_AZI_ELE.func,
                 u=control_input,
                 measurement_args=sim.map.features,
+                spec=MeasurementSpec(
+                    angle_mask=angle_mask(len(meas), stride=3, offsets=(1, 2))
+                ),
             )
 
         sim.append_result(

@@ -3,7 +3,24 @@
 import numpy as np
 import pytest
 
-from ekf_slam_3d.modules.math_utils import matrix_exponential
+from ekf_slam_3d.modules.math_utils import matrix_exponential, wrap_to_pi
+
+
+@pytest.mark.parametrize(
+    ("angle", "expected"),
+    [
+        (0.0, 0.0),
+        (np.pi, -np.pi),
+        (-np.pi, -np.pi),
+        (3 * np.pi, -np.pi),
+        (2 * np.pi + 0.1, 0.1),
+        (-2 * np.pi - 0.1, -0.1),
+    ],
+)
+def test_wrap_to_pi(angle: float, expected: float) -> None:
+    """Test that angles are wrapped into [-pi, pi)."""
+    # Act / Assert
+    assert wrap_to_pi(np.array([angle]))[0] == pytest.approx(expected)
 
 
 @pytest.mark.parametrize("t", [1.0, 0.1, 0.01])

@@ -13,6 +13,7 @@ PAUSE_TIME = 0.1
 # Kalman filter definitions
 DEFAULT_VARIANCE = 1e-2
 PROCESS_NOISE = 1e-5
+# standard deviation of the noise the simulated sensors add (see sensors.py)
 MEASUREMENT_NOISE = 2e-2
 DEFAULT_CONTROL = np.array([[0.0], [0.0]])
 
@@ -24,9 +25,10 @@ SIGMA_ROLL = 0.0
 SIGMA_PITCH = 1e-5
 SIGMA_YAW = 1e-2
 
-# control noise
+# control noise (standard deviations - see CONTROL_NOISE_COVARIANCE for the covariance)
 SIGMA_VEL = 2e-1
 SIGMA_OMEGA = 4e-2
+CONTROL_NOISE_COVARIANCE = np.diag([SIGMA_VEL**2, SIGMA_OMEGA**2])
 
 # State space definitions
 DEFAULT_DT = 1.0
@@ -46,6 +48,18 @@ VECTOR_LENGTH = 0.5
 
 # SLAM / mapping definitions
 LANDMARK_INIT_VARIANCE = 1e2
+SENSOR_RANGE = 10.0
+# the start pose defines the map frame, so it is known (almost) exactly
+START_POSE_VARIANCE = 1e-6
+
+# path following (pure pursuit on the EKF pose estimate)
+PURE_PURSUIT_LOOKAHEAD_STEPS = 3
+MAX_TURN_RATE = np.pi / 4
+
+# live plot view: grows to fit what is known, never pans/shrinks
+VIEW_MARGIN_FRACTION = 0.1
+VIEW_MIN_MARGIN = 2.0
+COVARIANCE_ELLIPSE_SIGMA = 2.0
 
 # Unit definitions
 DEFAULT_UNITS = "m"

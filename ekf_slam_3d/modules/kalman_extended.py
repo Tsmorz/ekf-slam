@@ -1,13 +1,29 @@
 """Basic docstring for my module."""
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
 from config.definitions import DEFAULT_CONTROL
-from ekf_slam_3d.modules.math_utils import symmetrize_matrix
+from ekf_slam_3d.modules.math_utils import symmetrize_matrix, wrap_to_pi
 from ekf_slam_3d.modules.state_space import StateSpaceLinear, StateSpaceNonlinear
+
+
+@dataclass(frozen=True, eq=False)
+class MeasurementSpec:
+    """Optional details of a measurement `z` passed to `ExtendedKalmanFilter.update()`.
+
+    :param covariance: covariance of `z`; defaults to `measurement_noise * I`
+    :param angle_mask: boolean mask, True at angle-valued entries of `z` (e.g. azimuth,
+        elevation). Those innovation entries are wrapped to [-pi, pi) so a
+        measurement/prediction pair straddling the atan2 branch cut isn't treated as a
+        huge, spurious correction.
+    """
+
+    covariance: np.ndarray | None = None
+    angle_mask: np.ndarray | None = None
 
 
 class ExtendedKalmanFilter:
@@ -55,6 +71,7 @@ class ExtendedKalmanFilter:
         sensor: Callable,
         u: np.ndarray,
         measurement_args: Any | None = None,
+        spec: MeasurementSpec | None = None,
     ) -> None:
         """Update the state estimate with measurement z.
 
@@ -63,8 +80,10 @@ class ExtendedKalmanFilter:
         :param u: Control input
         :param measurement_args: Additional arguments passed through to `sensor`
             (e.g., a list of map features, or a (pose, feature_ids, ...) tuple)
+        :param spec: optional covariance of `z` and mask of its angle-valued entries
         :return: Updated state estimate and state covariance
         """
+        spec = spec or MeasurementSpec()
         A, B = self.state_space_nonlinear.linearize(
             model=self.state_space_nonlinear.motion_model,
             x=self.x,
@@ -84,9 +103,63 @@ class ExtendedKalmanFilter:
             else sensor(self.x, measurement_args)
         )
 
-        R = self.measurement_noise * np.eye(len(z))
+        innovation = z - predict_z
+        if spec.angle_mask is not None:
+            innovation[spec.angle_mask] = wrap_to_pi(innovation[spec.angle_mask])
+
+        R = self._measurement_covariance(z, spec.covariance)
         S = state_space.C @ self.cov @ state_space.C.T + R
         K = self.cov @ state_space.C.T @ np.linalg.inv(S)
-        self.x = self.x + K @ (z - predict_z)
+        self.x = self.x + K @ innovation
         cov = (np.eye(self.cov.shape[0]) - K @ state_space.C) @ self.cov
         self.cov = symmetrize_matrix(cov)
+
+    def initialize_from_measurement(
+        self,
+        idx: int,
+        z: np.ndarray,
+        inverse_model: Callable,
+        model_args: Any | None = None,
+        measurement_covariance: np.ndarray | None = None,
+    ) -> None:
+        """Seed a not-yet-observed block of the state from a single measurement.
+
+        The block's covariance comes from propagating both the current state
+        uncertainty and the measurement noise through the inverse observation model,
+        and it keeps the block's cross-covariance with the rest of the state. Without
+        that cross-covariance a landmark seeded from an erroneous pose looks like an
+        independent, well-known reference, and later observations bend the pose to fit
+        it rather than correcting the landmark - leaving the whole map rigidly offset.
+
+        :param idx: index of the first state row of the block being initialized
+        :param z: the measurement the block is inverted from
+        :param inverse_model: maps stacked [state; z] (and `model_args`) to the block value
+        :param model_args: additional arguments passed through to `inverse_model`
+        :param measurement_covariance: optional covariance of `z`; defaults to
+            `measurement_noise * I`
+        """
+        G_x, G_z = self.state_space_nonlinear.linearize(
+            model=inverse_model, x=self.x, u=z, other_args=model_args
+        )
+        xz = np.vstack((self.x, z))
+        value = (
+            inverse_model(xz) if model_args is None else inverse_model(xz, model_args)
+        )
+        block = slice(idx, idx + value.shape[0])
+
+        R = self._measurement_covariance(z, measurement_covariance)
+        cross = G_x @ self.cov
+        block_cov = cross @ G_x.T + G_z @ R @ G_z.T
+
+        self.x[block] = value
+        self.cov[block, :] = cross
+        self.cov[:, block] = cross.T
+        self.cov[block, block] = block_cov
+        self.cov = symmetrize_matrix(self.cov)
+
+    def _measurement_covariance(
+        self, z: np.ndarray, measurement_covariance: np.ndarray | None
+    ) -> np.ndarray:
+        if measurement_covariance is not None:
+            return measurement_covariance
+        return self.measurement_noise * np.eye(len(z))

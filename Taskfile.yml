@@ -17,6 +17,26 @@ tasks:
     cmds:
       - uv run pytest --cov=ekf_slam_3d/ --cov-report=term-missing --no-cov-on-fail
 
+  demo:
+    desc: Run the full SLAM pipeline with a live animated plot (same as demo:slam)
+    cmds:
+      - task: demo:slam
+
+  demo:slam:
+    desc: "Run SLAM (pose + map unknown) live; pick a dataset with: task demo:slam -- --scenario <name>"
+    cmds:
+      - uv run python examples/ekf_slam_example.py {{.CLI_ARGS}}
+
+  demo:mapping:
+    desc: Run mapping (pose known, map unknown) with a live animated plot
+    cmds:
+      - uv run python examples/ekf_mapping_example.py
+
+  demo:localization:
+    desc: Run localization (map known, pose unknown) with a live animated plot
+    cmds:
+      - uv run python examples/ekf_localization_example.py
+
   format:
     desc: Format, lint, and type-check the code
     cmds:
