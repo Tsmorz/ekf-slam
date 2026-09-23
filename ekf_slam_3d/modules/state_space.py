@@ -1,7 +1,8 @@
 """Basic docstring for my module."""
 
 import copy
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 from loguru import logger
@@ -17,9 +18,9 @@ class StateSpaceLinear:
     def __init__(
         self,
         A: np.ndarray,
-        B: Optional[np.ndarray] = None,
-        C: Optional[np.ndarray] = None,
-        D: Optional[np.ndarray] = None,
+        B: np.ndarray | None = None,
+        C: np.ndarray | None = None,
+        D: np.ndarray | None = None,
     ):
         """Initialize the state-space model.
 
@@ -150,14 +151,14 @@ class StateSpaceNonlinear:
         model: Callable,
         x: np.ndarray,
         u: np.ndarray,
-        other_args: Optional[list[Any]] = None,
+        other_args: Any | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Linearize a list of callables.
 
         :param model: List of callables representing the model to linearize
         :param x: Current state
         :param u: Control input
-        :param other_args: Additional arguments (e.g., map of features)
+        :param other_args: Additional arguments passed through to `model`
         :return: Jacobian matrix
         """
         xu = np.vstack((x, u))
@@ -185,7 +186,7 @@ class StateSpaceNonlinear:
         fun: Callable,
         x: np.ndarray,
         x_idx: int,
-        other_args: Optional[Any] = None,
+        other_args: Any | None = None,
     ) -> np.ndarray | float:
         """Compute the derivative of the given function.
 

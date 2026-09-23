@@ -1,10 +1,8 @@
 """Add a doc string to my files."""
 
-from typing import Optional
-
 import numpy as np
+import pyqtgraph as pg
 from loguru import logger
-from matplotlib.patches import FancyArrow
 from scipy.spatial.transform import Rotation as Rot
 
 from config.definitions import EULER_ORDER, PLOT_ALPHA, VECTOR_LENGTH
@@ -15,8 +13,8 @@ class SE3:
 
     def __init__(
         self,
-        xyz: Optional[np.ndarray] = None,
-        roll_pitch_yaw: Optional[np.ndarray] = None,
+        xyz: np.ndarray | None = None,
+        roll_pitch_yaw: np.ndarray | None = None,
     ):
         if xyz is None:
             xyz = np.zeros(3)
@@ -75,13 +73,16 @@ class SE3:
         matrix = np.vstack((matrix, np.array([[0.0, 0.0, 0.0, 1.0]])))
         return matrix
 
-    def plot_se3(self, plot, color: str, alpha: float = PLOT_ALPHA) -> FancyArrow:
+    def plot_se3(
+        self, plot: pg.PlotWidget, color: str, alpha: float = PLOT_ALPHA
+    ) -> pg.PlotDataItem:
         """Add a drawing of the robot pose to the plot."""
-        fig, ax = plot
         dx, dy = VECTOR_LENGTH * np.cos(self.yaw), VECTOR_LENGTH * np.sin(self.yaw)
-        return ax.arrow(
-            x=self.x, y=self.y, dx=dx, dy=dy, width=0.1, color=color, alpha=alpha
+        item = plot.plot(
+            [self.x, self.x + dx], [self.y, self.y + dy], pen=pg.mkPen(color, width=2)
         )
+        item.setOpacity(alpha)
+        return item
 
 
 def state_to_se3(state: np.ndarray) -> SE3:

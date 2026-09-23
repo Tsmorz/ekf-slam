@@ -44,6 +44,9 @@ MAP_NUM_FEATURES = 10
 MAP_DIM = (10, 10)
 VECTOR_LENGTH = 0.5
 
+# SLAM / mapping definitions
+LANDMARK_INIT_VARIANCE = 1e2
+
 # Unit definitions
 DEFAULT_UNITS = "m"
 

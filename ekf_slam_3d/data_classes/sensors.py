@@ -1,20 +1,20 @@
 """Add a doc string to my files."""
 
+from collections.abc import Callable
 from enum import Enum, auto
-from typing import Callable, Optional
 
 import numpy as np
 from loguru import logger
 
 from config.definitions import DELTA_T
-from ekf_slam_3d.data_classes.lie_algebra import state_to_se3
+from ekf_slam_3d.data_classes.lie_algebra import SE3, state_to_se3
 from ekf_slam_3d.data_classes.map import Feature, distance_to_features
 
 
 def measure_gps(
     state: np.ndarray,
     features: list[Feature],
-    noise: Optional[np.ndarray | float] = None,
+    noise: np.ndarray | float | None = None,
 ) -> np.ndarray:
     """Calculate the gps position from a given pose.
 
@@ -33,7 +33,7 @@ def measure_gps(
 def measure_azimuth(
     state: np.ndarray,
     features: list[Feature],
-    noise: Optional[np.ndarray | float] = None,
+    noise: np.ndarray | float | None = None,
 ) -> np.ndarray:
     """Calculate the azimuth angle from a given pose to a list of features.
 
@@ -58,7 +58,7 @@ def measure_azimuth(
 def measure_elevation(
     state: np.ndarray,
     features: list[Feature],
-    noise: Optional[np.ndarray | float] = None,
+    noise: np.ndarray | float | None = None,
 ) -> np.ndarray:
     """Calculate the elevation angle from a given pose to a list of features.
 
@@ -83,7 +83,7 @@ def measure_elevation(
 def measure_distance(
     state: np.ndarray,
     features: list[Feature],
-    noise: Optional[np.ndarray | float] = None,
+    noise: np.ndarray | float | None = None,
 ) -> np.ndarray:
     """Calculate the distance from a given pose to a list of features.
 
@@ -105,7 +105,7 @@ def measure_distance(
 def measure_distance_azimuth_elevation(
     state: np.ndarray,
     features: list[Feature],
-    noise: Optional[np.ndarray | float] = None,
+    noise: np.ndarray | float | None = None,
 ) -> np.ndarray:
     """Calculate the elevation angle from a given pose to a list of features.
 
@@ -120,6 +120,148 @@ def measure_distance_azimuth_elevation(
 
     merged = np.array((distance, azimuth, elevation)).T.ravel()
     return np.reshape(merged, (len(merged), 1))
+
+
+def measure_distance_azimuth(
+    state: np.ndarray,
+    features: list[Feature],
+    noise: np.ndarray | float | None = None,
+) -> np.ndarray:
+    """Calculate the planar distance and azimuth from a given pose to a list of features.
+
+    Used for the mapping and SLAM pipelines, which track features as (x, y) pairs.
+
+    :param state: the current state vector
+    :param features: the list of features
+    :param noise: optional noise vector for measurement
+    :return: stacked [distance, azimuth] measurements, one pair per feature
+    """
+    distance = measure_distance(state=state, features=features, noise=noise)
+    azimuth = measure_azimuth(state=state, features=features, noise=noise)
+
+    merged = np.array((distance, azimuth)).T.ravel()
+    return np.reshape(merged, (len(merged), 1))
+
+
+def initialize_landmark_estimate(
+    pose: SE3, distance: float, azimuth: float
+) -> tuple[float, float]:
+    """Back out a landmark's global (x, y) position from a single range-azimuth sighting.
+
+    Used to seed a landmark's EKF state on first observation, rather than starting it
+    at the origin - which would make the azimuth/distance Jacobian a poor local
+    approximation until the filter had a chance to converge.
+
+    :param pose: the pose the sighting was taken from
+    :param distance: measured distance to the landmark
+    :param azimuth: measured azimuth (bearing) to the landmark, relative to pose.yaw
+    :return: (x, y) estimate of the landmark position in the global frame
+    """
+    heading = pose.yaw + azimuth
+    x = pose.x + distance * np.cos(heading)
+    y = pose.y + distance * np.sin(heading)
+    return x, y
+
+
+def _landmark_xy(
+    state: np.ndarray, num_landmarks: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Split a state vector's leading interleaved x/y landmark pairs into (xs, ys).
+
+    Only the first ``2 * num_landmarks`` rows are used, so this is safe to call on a
+    state vector that has extra rows (e.g. a control input) stacked after the landmarks.
+
+    :param state: state vector with interleaved x/y landmark pairs in its first rows
+    :param num_landmarks: total number of landmarks packed into the state
+    :return: (xs, ys) arrays of landmark coordinates
+    """
+    landmarks = state[: 2 * num_landmarks, 0]
+    return landmarks[0::2], landmarks[1::2]
+
+
+def measure_distance_azimuth_map(
+    state: np.ndarray,
+    args: tuple[SE3, list[int], int],
+    noise: np.ndarray | float | None = None,
+) -> np.ndarray:
+    """Range-azimuth measurement model for mapping with a known pose.
+
+    :param state: landmark position estimate vector (interleaved x/y pairs)
+    :param args: (observer pose, observed feature ids, total number of landmarks)
+    :param noise: optional noise scale for the measurement
+    :return: stacked [distance, azimuth] measurements for the observed ids
+    """
+    pose, feature_ids, num_landmarks = args
+    xs, ys = _landmark_xy(state, num_landmarks)
+    ids = np.array(feature_ids)
+    dx, dy = xs[ids] - pose.x, ys[ids] - pose.y
+    distance = np.sqrt(dx**2 + dy**2)
+    azimuth = np.arctan2(dy, dx) - pose.yaw
+    if noise is not None:
+        distance = distance + np.random.normal(
+            loc=0.0, scale=noise, size=distance.shape
+        )
+        azimuth = azimuth + np.random.normal(
+            loc=0.0, scale=noise / (1 + distance), size=azimuth.shape
+        )
+
+    merged = np.array((distance, azimuth)).T.ravel()
+    return np.reshape(merged, (len(merged), 1))
+
+
+def step_dynamics_map(state_control: np.ndarray, dt: float = DELTA_T) -> np.ndarray:
+    """Return the landmark state unchanged - landmarks do not evolve on their own.
+
+    :param state_control: the landmark state stacked with a (unused) dummy control
+    :param dt: the time step (unused, kept for interface parity with other motion models)
+    :return: the landmark state vector, unchanged
+    """
+    del dt
+    return state_control[:-1, 0:1]
+
+
+def measure_distance_azimuth_slam(
+    state: np.ndarray,
+    args: tuple[list[int], int],
+    noise: np.ndarray | float | None = None,
+) -> np.ndarray:
+    """Range-azimuth measurement model for full SLAM (pose and map both in the state).
+
+    :param state: SLAM state vector - pose (0:6) followed by interleaved x/y landmark pairs
+    :param args: (observed feature ids, total number of landmarks)
+    :param noise: optional noise scale for the measurement
+    :return: stacked [distance, azimuth] measurements for the observed ids
+    """
+    feature_ids, num_landmarks = args
+    pose = state_to_se3(state[0:6, 0])
+    xs, ys = _landmark_xy(state[6:, :], num_landmarks)
+    ids = np.array(feature_ids)
+    dx, dy = xs[ids] - pose.x, ys[ids] - pose.y
+    distance = np.sqrt(dx**2 + dy**2)
+    azimuth = np.arctan2(dy, dx) - pose.yaw
+    if noise is not None:
+        distance = distance + np.random.normal(
+            loc=0.0, scale=noise, size=distance.shape
+        )
+        azimuth = azimuth + np.random.normal(
+            loc=0.0, scale=noise / (1 + distance), size=azimuth.shape
+        )
+
+    merged = np.array((distance, azimuth)).T.ravel()
+    return np.reshape(merged, (len(merged), 1))
+
+
+def step_dynamics_slam(state_control: np.ndarray, dt: float = DELTA_T) -> np.ndarray:
+    """Motion model for full SLAM: the pose evolves per `step_dynamics`, landmarks are static.
+
+    :param state_control: pose, landmarks, and control vectors stacked together
+    :param dt: the time step
+    :return: the next SLAM state vector
+    """
+    num_landmark_dims = state_control.shape[0] - 6 - 2
+    landmarks = state_control[6 : 6 + num_landmark_dims, 0:1]
+    pose_vec = step_dynamics(np.vstack((state_control[:6], state_control[-2:])), dt=dt)
+    return np.vstack((pose_vec, landmarks))
 
 
 def step_dynamics(state_control: np.ndarray, dt: float = DELTA_T) -> np.ndarray:

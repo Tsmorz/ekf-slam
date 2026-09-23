@@ -1,9 +1,10 @@
 """Basic docstring for my module."""
 
-import matplotlib.pyplot as plt
+import time
+
 import numpy as np
-from matplotlib.patches import Ellipse, Patch
-from matplotlib.pyplot import Axes, Figure
+import pyqtgraph as pg
+from pyqtgraph.Qt import QtWidgets
 
 from config.definitions import (
     DEFAULT_DISCRETIZATION,
@@ -12,9 +13,13 @@ from config.definitions import (
     PLOT_ALPHA,
 )
 from ekf_slam_3d.data_classes.lie_algebra import SE3
+from ekf_slam_3d.data_classes.map import Feature
 from ekf_slam_3d.data_classes.slam import Map
 from ekf_slam_3d.modules.controller import get_angular_velocities_for_box
 from ekf_slam_3d.modules.state_space import StateSpaceLinear, StateSpaceNonlinear
+
+pg.setConfigOption("background", "w")
+pg.setConfigOption("foreground", "k")
 
 
 def mass_spring_damper_model(
@@ -63,23 +68,35 @@ class SlamSimulator:
         self.history: list[tuple[SE3, SE3]] = []
         self.map: Map = sim_map
         self.last_measurement: np.ndarray = np.array([])
-        self.time_stamps: np.ndarray = np.arange(
-            start=0.0, stop=20000 / DELTA_T, step=DELTA_T
-        )
+        self.time_stamps: np.ndarray = np.arange(0.0, 20000 / DELTA_T, DELTA_T)
         self.controls = get_angular_velocities_for_box(
             steps=len(self.time_stamps), radius_steps=8
         )
+        # created lazily on first plotted result, so headless/test usage (show_plot=False)
+        # never opens a GUI window
+        self._sim_plot: pg.PlotWidget | None = None
 
-        fig = plt.figure(figsize=(8, 8))
-        ax = fig.add_subplot(111)
-        plt.axis("equal")
-        plt.grid(True)
-        plt.xlabel("x position")
-        plt.ylabel("y position")
-        plt.title("Robot Localization")
-        for feature in self.map.features:
-            ax.plot(feature.x, feature.y, "k*")
-        self.sim_plot: tuple[Figure, Axes] = (fig, ax)
+    @property
+    def sim_plot(self) -> pg.PlotWidget:
+        """Return the plot widget for this simulation, creating it on first use."""
+        if self._sim_plot is None:
+            pg.mkQApp("EKF SLAM Simulation")
+            plot_widget = pg.PlotWidget(title="Robot Localization")
+            plot_widget.setAspectLocked(True)
+            plot_widget.showGrid(x=True, y=True)
+            plot_widget.setLabel("bottom", "x position")
+            plot_widget.setLabel("left", "y position")
+            plot_widget.resize(800, 800)
+            plot_widget.plot(
+                [feature.x for feature in self.map.features],
+                [feature.y for feature in self.map.features],
+                pen=None,
+                symbol="star",
+                symbolBrush="k",
+            )
+            plot_widget.show()
+            self._sim_plot = plot_widget
+        return self._sim_plot
 
     def step(self, u: np.ndarray) -> SE3:
         """Predict the next state and error covariance.
@@ -97,15 +114,25 @@ class SlamSimulator:
         estimate: tuple[SE3, np.ndarray],
         measurement: np.ndarray,
         show_plot: bool = True,
+        estimated_features: list[Feature] | None = None,
+        measurement_stride: int = 3,
     ) -> None:
-        """Update the state estimate based on an estimated pose."""
+        """Update the state estimate based on an estimated pose.
+
+        :param estimate: (estimated pose, pose covariance)
+        :param measurement: the latest raw sensor measurement, used to draw rays
+        :param show_plot: whether to draw this step
+        :param estimated_features: optional estimated landmark positions (mapping/SLAM)
+        :param measurement_stride: number of values packed per feature in `measurement`
+            (3 for distance/azimuth/elevation, 2 for distance/azimuth)
+        """
         pose, cov = estimate
         self.history.append((pose, self.pose))
 
         old_poses = []
         for old_pose, _ in self.history[-20:]:
             old_poses.append(old_pose)
-        plot_items: list[plt.Line2D | Patch] = []
+        plot_items: list[QtWidgets.QGraphicsItem] = []
         if show_plot:
             plot_items.append(self.pose.plot_se3(plot=self.sim_plot, color="red"))
 
@@ -116,50 +143,64 @@ class SlamSimulator:
                     )
                 )
             plot_items.append(self.plot_covariance(pose=pose, covariance=cov))
-            plot_items.extend(self.plot_measurement(pose=pose, measurement=measurement))
+            plot_items.extend(
+                self.plot_measurement(
+                    pose=pose, measurement=measurement, stride=measurement_stride
+                )
+            )
+            if estimated_features:
+                landmarks = self.sim_plot.plot(
+                    [f.x for f in estimated_features],
+                    [f.y for f in estimated_features],
+                    pen=None,
+                    symbol="+",
+                    symbolBrush="g",
+                    symbolSize=10,
+                )
+                plot_items.append(landmarks)
             self.last_measurement = measurement
-            plt.axis("equal")
-            plt.pause(PAUSE_TIME)
+            pg.mkQApp().processEvents()
+            time.sleep(PAUSE_TIME)
 
             # remove the sensor measurements
             for item in plot_items:
-                item.remove()
+                self.sim_plot.removeItem(item)
 
-    def plot_covariance(self, pose: SE3, covariance: np.ndarray) -> Patch:
+    def plot_covariance(
+        self, pose: SE3, covariance: np.ndarray
+    ) -> QtWidgets.QGraphicsEllipseItem:
         """Add a drawing of the robot covariance to the plot."""
-        xy_cov = np.linalg.eigvals(covariance[:2, :2])
+        xy_cov = np.linalg.eigvalsh(covariance[:2, :2])
         xy_cov = np.clip(xy_cov, a_min=-20, a_max=20)
+        width, height = float(xy_cov[0]), float(xy_cov[1])
 
-        ellipse = Ellipse(
-            xy=(float(pose.x), float(pose.y)),
-            width=float(xy_cov[0]),
-            height=float(xy_cov[1]),
-            angle=np.rad2deg(np.arctan2(xy_cov[1], xy_cov[0])),
-            fc="None",
-            edgecolor="k",
-            alpha=PLOT_ALPHA,
-        )
-        return self.sim_plot[1].add_patch(ellipse)
+        ellipse = QtWidgets.QGraphicsEllipseItem(-width / 2, -height / 2, width, height)
+        ellipse.setPen(pg.mkPen("k"))
+        ellipse.setBrush(pg.mkBrush(None))
+        ellipse.setOpacity(PLOT_ALPHA)
+        ellipse.setPos(float(pose.x), float(pose.y))
+        ellipse.setRotation(np.rad2deg(np.arctan2(xy_cov[1], xy_cov[0])))
+        self.sim_plot.addItem(ellipse)
+        return ellipse
 
     def plot_measurement(
         self,
         measurement: np.ndarray,
         pose: SE3,
-    ) -> list[plt.Line2D]:
+        stride: int = 3,
+    ) -> list[pg.PlotDataItem]:
         """Plot the simulation results."""
-        # TODO: make the plot work for 3D features with azimuth and elevation
-        rays: list[plt.Line2D] = []
-        if not np.array_equal(self.last_measurement, measurement):
-            fig, ax = self.sim_plot
-            rays = []
-            distance = measurement[0::3, 0]
-            azimuth = measurement[1::3, 0]
-            elevation = measurement[2::3, 0]
-            dae = zip(distance, azimuth, elevation)
-            for dist, azi, _ in dae:
+        rays: list[pg.PlotDataItem] = []
+        if measurement.size > 0 and not np.array_equal(
+            self.last_measurement, measurement
+        ):
+            distance = measurement[0::stride, 0]
+            azimuth = measurement[1::stride, 0]
+            for dist, azi in zip(distance, azimuth, strict=False):
                 x1, x2 = pose.x, pose.x + dist * np.cos(pose.yaw + azi)
                 y1, y2 = pose.y, pose.y + dist * np.sin(pose.yaw + azi)
-                (m,) = ax.plot([x1, x2], [y1, y2], "k-", alpha=0.2)
-                rays.append(m)
+                ray = self.sim_plot.plot([x1, x2], [y1, y2], pen=pg.mkPen("k", width=1))
+                ray.setOpacity(0.2)
+                rays.append(ray)
             return rays
         return rays

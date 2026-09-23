@@ -1,20 +1,18 @@
 """Basic docstring for my module."""
 
-from typing import Optional
-
 import numpy as np
 from loguru import logger
-from src.data_classes.state_history import StateHistory, plot_history
-from src.modules.controller import full_state_feedback, get_control_input
-from src.modules.kalman import KalmanFilter
-from src.modules.simulators import (
-    mass_spring_damper_model,
-)
-from src.modules.state_space import StateSpaceLinear
 
 from config.definitions import (
     DEFAULT_DISCRETIZATION,
 )
+from ekf_slam_3d.data_classes.state_history import StateHistory, plot_history
+from ekf_slam_3d.modules.controller import full_state_feedback, get_control_input
+from ekf_slam_3d.modules.kalman import KalmanFilter
+from ekf_slam_3d.modules.simulators import (
+    mass_spring_damper_model,
+)
+from ekf_slam_3d.modules.state_space import StateSpaceLinear
 
 
 class KalmanSimulator:
@@ -43,7 +41,7 @@ class KalmanSimulator:
         self.R: np.ndarray = measurement_noise
         self.x: np.ndarray = initial_state
 
-    def step(self, u: Optional[np.ndarray] = None) -> np.ndarray:
+    def step(self, u: np.ndarray | None = None) -> np.ndarray:
         """Predict the next state and error covariance.
 
         :param u: Control input

@@ -1,7 +1,5 @@
 """Basic docstring for my module."""
 
-from typing import Optional
-
 import numpy as np
 from loguru import logger
 from scipy.signal import place_poles
@@ -53,8 +51,8 @@ class LQRController:
         self,
         A: np.ndarray,
         B: np.ndarray,
-        Q: Optional[np.ndarray] = None,
-        R: Optional[np.ndarray] = None,
+        Q: np.ndarray | None = None,
+        R: np.ndarray | None = None,
         num_steps: int = DEFAULT_NUM_STEPS,
     ):
         """Initialize the LQR controller.

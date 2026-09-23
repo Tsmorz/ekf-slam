@@ -12,6 +12,7 @@ class Pipeline(Enum):
 
     KF = auto()
     EKF = auto()
+    MAPPING = auto()
     SLAM = auto()
     CONTROLLER = auto()
     STATE_SPACE = auto()
@@ -36,8 +37,10 @@ if __name__ == "__main__":  # pragma: no cover
         subprocess.run(["python", "examples/kf_example.py"], check=True)
     elif pipeline_id == Pipeline.EKF.name:
         subprocess.run(["python", "examples/ekf_localization_example.py"], check=False)
+    elif pipeline_id == Pipeline.MAPPING.name:
+        subprocess.run(["python", "examples/ekf_mapping_example.py"], check=False)
     elif pipeline_id == Pipeline.SLAM.name:
-        logger.error(f"Pipeline '{pipeline_id}' not implemented.")
+        subprocess.run(["python", "examples/ekf_slam_example.py"], check=False)
     elif pipeline_id == Pipeline.STATE_SPACE.name:
         subprocess.run(["python", "examples/state_space_example.py"], check=False)
     else:

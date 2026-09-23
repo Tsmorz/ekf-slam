@@ -1,6 +1,7 @@
 """Basic docstring for my module."""
 
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 
@@ -53,14 +54,15 @@ class ExtendedKalmanFilter:
         z: np.ndarray,
         sensor: Callable,
         u: np.ndarray,
-        measurement_args: Optional[list[Any]] = None,
+        measurement_args: Any | None = None,
     ) -> None:
         """Update the state estimate with measurement z.
 
         :param z: Measurement
         :param sensor: Measurement function
         :param u: Control input
-        :param measurement_args: Additional arguments (e.g., map of features)
+        :param measurement_args: Additional arguments passed through to `sensor`
+            (e.g., a list of map features, or a (pose, feature_ids, ...) tuple)
         :return: Updated state estimate and state covariance
         """
         A, B = self.state_space_nonlinear.linearize(

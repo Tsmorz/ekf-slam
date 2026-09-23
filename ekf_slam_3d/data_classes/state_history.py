@@ -1,7 +1,6 @@
 """Add a doc string to my files."""
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -23,9 +22,9 @@ class StateHistory:
         self,
         t: float,
         x: np.ndarray,
-        x_truth: Optional[np.ndarray] = None,
-        cov: Optional[np.ndarray] = None,
-        u: Optional[np.ndarray] = None,
+        x_truth: np.ndarray | None = None,
+        cov: np.ndarray | None = None,
+        u: np.ndarray | None = None,
     ) -> None:
         """Append state data."""
         self.time.append(t)

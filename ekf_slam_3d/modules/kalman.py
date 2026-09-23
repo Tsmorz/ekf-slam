@@ -1,7 +1,5 @@
 """Basic docstring for my module."""
 
-from typing import Optional
-
 import numpy as np
 
 from config.definitions import MEASUREMENT_NOISE, PROCESS_NOISE
@@ -17,8 +15,8 @@ class KalmanFilter:
         state_space: StateSpaceLinear,
         initial_x: np.ndarray,
         initial_covariance: np.ndarray,
-        process_noise: Optional[np.ndarray] = None,
-        measurement_noise: Optional[np.ndarray] = None,
+        process_noise: np.ndarray | None = None,
+        measurement_noise: np.ndarray | None = None,
     ) -> None:
         """Initialize the Kalman Filter.
 
@@ -40,7 +38,7 @@ class KalmanFilter:
         self.x: np.ndarray = initial_x
         self.cov: np.ndarray = initial_covariance
 
-    def predict(self, u: Optional[np.ndarray] = None) -> None:
+    def predict(self, u: np.ndarray | None = None) -> None:
         """Predict the next state and error covariance.
 
         :param u: Control input

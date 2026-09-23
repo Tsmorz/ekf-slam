@@ -16,9 +16,12 @@ class PoseMap:
     map: Map = field(default_factory=Map)
 
     def as_vector(self) -> np.ndarray:
-        """Return the state data as a vector."""
-        vector = np.zeros((3 + 2 * len(self.map.features), 1))
-        return vector
+        """Return the state data as a vector: pose (6) plus interleaved x/y feature pairs."""
+        feature_vector = np.zeros((2 * len(self.map.features), 1))
+        for idx, feature in enumerate(self.map.features):
+            feature_vector[2 * idx, 0] = feature.x
+            feature_vector[2 * idx + 1, 0] = feature.y
+        return np.vstack((self.pose.as_vector(), feature_vector))
 
     def from_vector(self, ekf_state: np.ndarray) -> None:
         """Convert the state vector to the corresponding attributes.
@@ -36,6 +39,11 @@ class PoseMap:
         features_y = ekf_state[7::2, 0]
         features = [
             Feature(x=float(x), y=float(y), id=idx)
-            for idx, (x, y) in enumerate(zip(features_x, features_y))
+            for idx, (x, y) in enumerate(zip(features_x, features_y, strict=False))
         ]
         self.map = Map(features=features)
+
+    @property
+    def num_features(self) -> int:
+        """Return the number of features tracked in the map."""
+        return len(self.map.features)
