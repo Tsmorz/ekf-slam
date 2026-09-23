@@ -1,10 +1,11 @@
 """Basic docstring for my module."""
 
+from __future__ import annotations
+
 import time
+from typing import TYPE_CHECKING
 
 import numpy as np
-import pyqtgraph as pg
-from pyqtgraph.Qt import QtWidgets
 
 from config.definitions import (
     DEFAULT_DISCRETIZATION,
@@ -18,8 +19,9 @@ from ekf_slam_3d.data_classes.slam import Map
 from ekf_slam_3d.modules.controller import get_angular_velocities_for_box
 from ekf_slam_3d.modules.state_space import StateSpaceLinear, StateSpaceNonlinear
 
-pg.setConfigOption("background", "w")
-pg.setConfigOption("foreground", "k")
+if TYPE_CHECKING:
+    import pyqtgraph as pg
+    from pyqtgraph.Qt import QtWidgets
 
 
 def mass_spring_damper_model(
@@ -79,7 +81,11 @@ class SlamSimulator:
     @property
     def sim_plot(self) -> pg.PlotWidget:
         """Return the plot widget for this simulation, creating it on first use."""
+        import pyqtgraph as pg
+
         if self._sim_plot is None:
+            pg.setConfigOption("background", "w")
+            pg.setConfigOption("foreground", "k")
             pg.mkQApp("EKF SLAM Simulation")
             plot_widget = pg.PlotWidget(title="Robot Localization")
             plot_widget.setAspectLocked(True)
@@ -134,6 +140,8 @@ class SlamSimulator:
             old_poses.append(old_pose)
         plot_items: list[QtWidgets.QGraphicsItem] = []
         if show_plot:
+            import pyqtgraph as pg
+
             plot_items.append(self.pose.plot_se3(plot=self.sim_plot, color="red"))
 
             for ii, old_pose in enumerate(old_poses):
@@ -170,6 +178,9 @@ class SlamSimulator:
         self, pose: SE3, covariance: np.ndarray
     ) -> QtWidgets.QGraphicsEllipseItem:
         """Add a drawing of the robot covariance to the plot."""
+        import pyqtgraph as pg
+        from pyqtgraph.Qt import QtWidgets
+
         xy_cov = np.linalg.eigvalsh(covariance[:2, :2])
         xy_cov = np.clip(xy_cov, a_min=-20, a_max=20)
         width, height = float(xy_cov[0]), float(xy_cov[1])
@@ -194,6 +205,8 @@ class SlamSimulator:
         if measurement.size > 0 and not np.array_equal(
             self.last_measurement, measurement
         ):
+            import pyqtgraph as pg
+
             distance = measurement[0::stride, 0]
             azimuth = measurement[1::stride, 0]
             for dist, azi in zip(distance, azimuth, strict=False):

@@ -1,7 +1,8 @@
 """Basic docstring for my module."""
 
 import numpy as np
-from src.modules.state_space import StateSpaceLinear
+
+from ekf_slam_3d.modules.state_space import StateSpaceLinear
 
 
 def pipeline() -> None:

@@ -1,6 +1,11 @@
 version: "3"
 
 tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+
   init:
     desc: Install dependencies and create the virtual environment
     cmds:

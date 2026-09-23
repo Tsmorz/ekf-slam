@@ -1,11 +1,17 @@
 """Add a doc string to my files."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
-import pyqtgraph as pg
 from loguru import logger
 from scipy.spatial.transform import Rotation as Rot
 
 from config.definitions import EULER_ORDER, PLOT_ALPHA, VECTOR_LENGTH
+
+if TYPE_CHECKING:
+    import pyqtgraph as pg
 
 
 class SE3:
@@ -77,6 +83,8 @@ class SE3:
         self, plot: pg.PlotWidget, color: str, alpha: float = PLOT_ALPHA
     ) -> pg.PlotDataItem:
         """Add a drawing of the robot pose to the plot."""
+        import pyqtgraph as pg
+
         dx, dy = VECTOR_LENGTH * np.cos(self.yaw), VECTOR_LENGTH * np.sin(self.yaw)
         item = plot.plot(
             [self.x, self.x + dx], [self.y, self.y + dy], pen=pg.mkPen(color, width=2)
