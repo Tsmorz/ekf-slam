@@ -8,6 +8,7 @@ from ekf_slam_3d.modules.controller import (
     box_path,
     full_state_feedback,
     get_control_input,
+    pitch_rate_toward_path,
     pure_pursuit_turn_rate,
 )
 from ekf_slam_3d.modules.simulators import mass_spring_damper_model
@@ -99,3 +100,27 @@ def test_full_state_feedback() -> None:
     # Assert
     new_eigenvalues = np.linalg.eigvals(A_prime)
     np.testing.assert_array_almost_equal(new_eigenvalues, desired_eigenvalues)
+
+
+@pytest.mark.parametrize(("target_z", "expected_sign"), [(3.0, 1.0), (-3.0, -1.0)])
+def test_pitch_rate_toward_path_climbs_and_descends(
+    target_z: float, expected_sign: float
+) -> None:
+    """Test that the pitch command noses up toward a higher path and down toward a lower one."""
+    # Arrange
+    path = np.array([[x, 0.0, target_z] for x in np.arange(0.0, 10.0)])
+
+    # Act
+    pitch_rate = pitch_rate_toward_path(SE3(), path, lookahead_steps=3)
+
+    # Assert
+    assert np.sign(pitch_rate) == expected_sign
+
+
+def test_pitch_rate_is_zero_when_level_on_a_level_path() -> None:
+    """Test that a level vehicle on a level path isn't commanded to pitch."""
+    # Arrange
+    path = np.array([[x, 0.0, 0.0] for x in np.arange(0.0, 10.0)])
+
+    # Act / Assert
+    assert pitch_rate_toward_path(SE3(), path) == pytest.approx(0.0)

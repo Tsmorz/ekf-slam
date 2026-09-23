@@ -43,10 +43,19 @@ of bug:
 | `sparse`     | stretches with nothing in view, then loop closure | 2 / 6 | 0.02 m | 1.31 -> 0.89 m |
 | `dense`      | 24 landmarks, many in view at once | 5 / 24 | 0.01 m | 0.14 -> 0.02 m |
 | `offset_map` | the whole world far from the origin | 3 / 12 | 0.02 m | 0.62 -> 0.24 m |
+| `baseline_3d` | 3D: landmarks 0-8 m high, robot climbing/descending 2-6 m every loop | 3 / 12 | 0.06 m | 0.80 -> 0.29 m |
+| `steep_3d` | 3D: tall map (0-12 m), 1-9 m altitude swing, large elevation angles | 4 / 12 | 0.08 m | 0.13 -> 0.02 m |
+| `branch_cut_3d` | 3D while facing -x, on the +-pi branch cut | 2 / 12 | 0.03 m | 0.72 -> 0.22 m |
+
+The `_3d` datasets run full 3D SLAM: the robot commands velocity, yaw rate, and pitch
+rate (climbing or descending along its pitch), senses range, azimuth, and elevation, and
+the EKF estimates its x/y/z pose along with x/y/z landmark positions. Elevation is
+measured above the horizontal plane. Final pose error includes altitude, and the 3D runs
+also check that altitude is tracked to within 0.25 m at every step.
 
 For every dataset the tests check that the map is discovered progressively, that the
-pose and map stay accurate, that the map's shape is right, and that yaw never jumps
-between steps. They also check that the filter is never overconfident about a landmark,
+pose and map stay accurate, that the map's shape is right, and that yaw and pitch never
+jump between steps. They also check that the filter is never overconfident about a landmark,
 and that every landmark keeps improving after it's first seen. Moving the whole world
 must not change any error.
 
@@ -133,12 +142,14 @@ task demo:localization
 task demo:mapping
 task demo:slam                           # also just `task demo`
 task demo:slam -- --scenario clockwise   # any dataset from the table above
+task demo:slam3d                         # 3D SLAM (same as --scenario baseline_3d)
 ```
 
 Each of these opens a live pyqtgraph window, so they need a real display - run them
 locally rather than in a headless environment. The view grows to fit the robot and
 whatever is known about the map, then stays put. Estimated landmarks (green `+`) are
 drawn with their 2-sigma uncertainty ellipses, which shrink as they're re-observed.
+The plot is top-down, so 3D runs show x/y; altitude is in the logged estimates.
 
 ## Development
 

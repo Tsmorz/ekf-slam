@@ -7,6 +7,7 @@ from scipy.signal import place_poles
 from config.definitions import (
     DEFAULT_NUM_STEPS,
     DELTA_T,
+    MAX_PITCH_RATE,
     MAX_TURN_RATE,
     PURE_PURSUIT_LOOKAHEAD_STEPS,
     ROBOT_SPEED,
@@ -168,9 +169,34 @@ def pure_pursuit_turn_rate(
     :param max_turn_rate: turn rate limit
     :return: turn rate command (rad per unit time)
     """
-    nearest = int(np.argmin(np.hypot(path[:, 0] - pose.x, path[:, 1] - pose.y)))
-    target = path[(nearest + lookahead_steps) % len(path)]
+    target = _lookahead_target(pose, path, lookahead_steps)
     dx, dy = target[0] - pose.x, target[1] - pose.y
     alpha = wrap_to_pi(np.arctan2(dy, dx) - pose.yaw)
     turn_rate = 2 * speed * np.sin(alpha) / max(float(np.hypot(dx, dy)), 1e-6)
     return float(np.clip(turn_rate, -max_turn_rate, max_turn_rate))
+
+
+def pitch_rate_toward_path(
+    pose: SE3,
+    path: np.ndarray,
+    lookahead_steps: int = PURE_PURSUIT_LOOKAHEAD_STEPS,
+    max_pitch_rate: float = MAX_PITCH_RATE,
+) -> float:
+    """Return the pitch rate that points `pose` at the altitude of the lookahead point.
+
+    :param pose: the pose to steer from (in practice the filter's estimate)
+    :param path: (N, 3) closed-loop path positions, with altitude in the last column
+    :param lookahead_steps: how many path points past the nearest one to aim at
+    :param max_pitch_rate: pitch rate limit
+    :return: pitch rate command (rad per unit time)
+    """
+    target = _lookahead_target(pose, path, lookahead_steps)
+    horizontal = max(float(np.hypot(target[0] - pose.x, target[1] - pose.y)), 1e-6)
+    desired_pitch = np.arctan2(target[2] - pose.z, horizontal)
+    pitch_rate = (desired_pitch - pose.pitch) / DELTA_T
+    return float(np.clip(pitch_rate, -max_pitch_rate, max_pitch_rate))
+
+
+def _lookahead_target(pose: SE3, path: np.ndarray, lookahead_steps: int) -> np.ndarray:
+    nearest = int(np.argmin(np.hypot(path[:, 0] - pose.x, path[:, 1] - pose.y)))
+    return path[(nearest + lookahead_steps) % len(path)]

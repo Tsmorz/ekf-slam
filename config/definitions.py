@@ -29,6 +29,11 @@ SIGMA_YAW = 1e-2
 SIGMA_VEL = 2e-1
 SIGMA_OMEGA = 4e-2
 CONTROL_NOISE_COVARIANCE = np.diag([SIGMA_VEL**2, SIGMA_OMEGA**2])
+# 3D vehicles also command pitch rate: [velocity, yaw rate, pitch rate]
+SIGMA_PITCH_RATE = 2e-2
+CONTROL_NOISE_COVARIANCE_3D = np.diag(
+    [SIGMA_VEL**2, SIGMA_OMEGA**2, SIGMA_PITCH_RATE**2]
+)
 
 # State space definitions
 DEFAULT_DT = 1.0
@@ -58,6 +63,7 @@ LANDMARK_JITTER_FRACTION = 0.3
 ROBOT_SPEED = 1.0
 PURE_PURSUIT_LOOKAHEAD_STEPS = 3
 MAX_TURN_RATE = np.pi / 4
+MAX_PITCH_RATE = np.pi / 8
 
 # live plot view: grows to fit what is known, never pans/shrinks
 VIEW_MARGIN_FRACTION = 0.1

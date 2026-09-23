@@ -11,13 +11,17 @@ from examples.slam_scenarios import SCENARIOS
 DEFAULT_TOLERANCES = (1.0, 0.5, 1.0, 0.5)
 TOLERANCES = {"sparse": (1.0, 2.0, 3.0, 1.0)}
 
-# a real loop-closure correction moves yaw by a few degrees; an unwrapped bearing
-# innovation throws it by 100+ degrees in a single step
+# a real loop-closure correction moves yaw (or pitch) by a few degrees; an unwrapped
+# bearing innovation throws yaw by 100+ degrees in a single step
 MAX_YAW_JUMP_DEG = 30.0
+MAX_PITCH_JUMP_DEG = 15.0
 
-# largest landmark normalized estimation error squared (2 dof); seeding landmarks
+# largest landmark normalized estimation error squared (2 or 3 dof); seeding landmarks
 # without their cross-covariance to the pose drives this into the hundreds
 MAX_LANDMARK_NEES = 50.0
+
+# worst altitude error at any step of a 3D run, in meters
+MAX_ALTITUDE_ERROR = 0.25
 
 
 @pytest.fixture(scope="module", params=sorted(SCENARIOS))
@@ -43,13 +47,13 @@ def _map_shape_error(run: SlamRun) -> float:
     handedness bugs) from a rigid offset of the whole map.
     """
     ids = _landmark_ids(run)
-    true = np.array(
-        [[run.true_map.features[i].x, run.true_map.features[i].y] for i in ids]
-    )
+    true = np.array([run.landmark_truth(i) for i in ids])
     est = np.array([run.landmark_estimate(i) for i in ids])
     true_c, est_c = true - true.mean(axis=0), est - est.mean(axis=0)
     u, _, vt = np.linalg.svd(true_c.T @ est_c)
-    rotation = vt.T @ np.diag([1.0, np.sign(np.linalg.det(vt.T @ u.T))]) @ u.T
+    no_reflection = np.ones(run.landmark_dim)
+    no_reflection[-1] = np.sign(np.linalg.det(vt.T @ u.T))
+    rotation = vt.T @ np.diag(no_reflection) @ u.T
     return float(np.linalg.norm(est_c - true_c @ rotation.T, axis=1).max())
 
 
@@ -64,9 +68,8 @@ def test_map_is_discovered_as_the_robot_drives(run: SlamRun) -> None:
 def test_final_pose_and_map_accuracy(run: SlamRun) -> None:
     """Test the final pose and landmark estimates against ground truth."""
     position_tol, mean_tol, max_tol, _ = _tolerances(run)
-    position_error = np.hypot(
-        run.ekf.x[0, 0] - run.true_pose.x, run.ekf.x[1, 0] - run.true_pose.y
-    )
+    true_position = [run.true_pose.x, run.true_pose.y, run.true_pose.z]
+    position_error = np.linalg.norm(run.ekf.x[0:3, 0] - true_position)
     landmark_errors = [run.landmark_error(i) for i in _landmark_ids(run)]
 
     assert position_error < position_tol
@@ -88,11 +91,19 @@ def test_no_sudden_orientation_jumps(run: SlamRun) -> None:
     assert np.degrees(np.max(np.abs(yaw_jump))) < MAX_YAW_JUMP_DEG
 
 
+def test_no_sudden_pitch_jumps(run: SlamRun) -> None:
+    """Test that the pitch estimate never changes by much more than the true pitch does."""
+    estimated_pitch = np.array([pose[4] for pose in run.estimated_poses])
+    true_pitch = np.array([pose.pitch for pose in run.true_poses])
+    pitch_jump = np.diff(estimated_pitch) - np.diff(true_pitch)
+
+    assert np.degrees(np.max(np.abs(pitch_jump))) < MAX_PITCH_JUMP_DEG
+
+
 def test_filter_is_not_overconfident_about_landmarks(run: SlamRun) -> None:
     """Test that every landmark's error is plausible given the filter's own covariance."""
     for i in _landmark_ids(run):
-        feature = run.true_map.features[i]
-        error = run.landmark_estimate(i) - np.array([feature.x, feature.y])
+        error = run.landmark_estimate(i) - run.landmark_truth(i)
         nees = error @ np.linalg.solve(run.landmark_covariance(i), error)
         assert nees < MAX_LANDMARK_NEES, f"landmark {i}"
 
@@ -112,6 +123,19 @@ def test_map_knowledge_improves_along_with_the_pose(run: SlamRun) -> None:
     first_errors = [run.first_seen[i][0] for i in ids]
     final_errors = [run.landmark_error(i) for i in ids]
     assert np.mean(final_errors) < np.mean(first_errors)
+
+
+def test_3d_scenarios_estimate_altitude(run: SlamRun) -> None:
+    """Test that 3D runs really fly at varying altitude and track it closely."""
+    if not run.scenario.three_d:
+        pytest.skip("planar scenario")
+    true_altitude = np.array([pose.z for pose in run.true_poses])
+    estimated_altitude = np.array([pose[2] for pose in run.estimated_poses])
+    landmark_heights = [feature.z for feature in run.true_map.features]
+
+    assert np.ptp(true_altitude) > run.scenario.altitude_swing
+    assert np.ptp(landmark_heights) > 1.0
+    assert np.max(np.abs(estimated_altitude - true_altitude)) < MAX_ALTITUDE_ERROR
 
 
 def test_results_do_not_depend_on_where_the_world_is() -> None:

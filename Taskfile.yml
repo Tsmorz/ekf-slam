@@ -27,6 +27,11 @@ tasks:
     cmds:
       - uv run python examples/ekf_slam_example.py {{.CLI_ARGS}}
 
+  demo:slam3d:
+    desc: "Run 3D SLAM (x/y/z pose and landmarks, range-azimuth-elevation sensing) live"
+    cmds:
+      - uv run python examples/ekf_slam_example.py --scenario baseline_3d
+
   demo:mapping:
     desc: Run mapping (pose known, map unknown) with a live animated plot
     cmds:

@@ -62,15 +62,18 @@ def measure_elevation(
 ) -> np.ndarray:
     """Calculate the elevation angle from a given pose to a list of features.
 
+    Elevation is measured above the horizontal plane (like azimuth, it is taken in a
+    level, yaw-aligned sensor frame), so it lies in [-pi/2, pi/2].
+
     :param state: the current state vector
     :param features: the list of features
     :param noise: optional noise vector for measurement
-    :return: the azimuth angles
+    :return: the elevation angles
     """
     pose = state_to_se3(state)
     dx, dy, dz = distance_to_features(pose=pose, features=features)
     distance = np.linalg.norm(np.array([dx, dy, dz]), axis=0)
-    elevation = np.arctan2(dz, dx) - pose.yaw
+    elevation = np.arctan2(dz, np.hypot(dx, dy))
     if noise is not None:
         measurement_noise = np.random.normal(
             loc=0.0, scale=noise / (1 + distance), size=dx.shape
@@ -107,12 +110,12 @@ def measure_distance_azimuth_elevation(
     features: list[Feature],
     noise: np.ndarray | float | None = None,
 ) -> np.ndarray:
-    """Calculate the elevation angle from a given pose to a list of features.
+    """Calculate the distance, azimuth, and elevation from a pose to a list of features.
 
     :param state: the current state vector
     :param features: the list of features
     :param noise: optional noise vector for measurement
-    :return: the azimuth angles
+    :return: stacked [distance, azimuth, elevation] measurements, one triple per feature
     """
     distance = measure_distance(state=state, features=features, noise=noise)
     azimuth = measure_azimuth(state=state, features=features, noise=noise)
@@ -143,20 +146,26 @@ def measure_distance_azimuth(
     return np.reshape(merged, (len(merged), 1))
 
 
-def distance_azimuth_covariance(readings: np.ndarray, noise: float) -> np.ndarray:
-    """Return the covariance of the noise `measure_distance_azimuth` adds to `readings`.
+def distance_azimuth_covariance(
+    readings: np.ndarray, noise: float, stride: int = 2
+) -> np.ndarray:
+    """Return the covariance of the noise the range/bearing sensors add to `readings`.
 
-    `noise` is a standard deviation: distance gets `noise`, and azimuth gets
-    `noise / (1 + distance)`. The simulator scales by the true distance, which a
-    filter can't know, so the measured distance stands in for it here.
+    `noise` is a standard deviation: distance gets `noise`, and each angle (azimuth,
+    and elevation when `stride` is 3) gets `noise / (1 + distance)`. The simulator
+    scales by the true distance, which a filter can't know, so the measured distance
+    stands in for it here.
 
-    :param readings: stacked [distance, azimuth] pairs
-    :param noise: the noise scale passed to `measure_distance_azimuth`
+    :param readings: stacked [distance, azimuth] pairs, or [distance, azimuth,
+        elevation] triples when `stride` is 3
+    :param noise: the noise scale passed to the measurement function
+    :param stride: values per landmark (2 or 3)
     :return: diagonal covariance approximating the simulated sensor's
     """
     variances = np.empty(len(readings))
-    variances[0::2] = noise**2
-    variances[1::2] = (noise / (1 + readings[0::2, 0])) ** 2
+    variances[0::stride] = noise**2
+    for offset in range(1, stride):
+        variances[offset::stride] = (noise / (1 + readings[0::stride, 0])) ** 2
     return np.diag(variances)
 
 
@@ -197,6 +206,40 @@ def initialize_landmark_estimate(
     return x, y
 
 
+def initialize_landmark_estimate_3d(
+    pose: SE3, distance: float, azimuth: float, elevation: float
+) -> tuple[float, float, float]:
+    """Back out a landmark's global (x, y, z) from one range-azimuth-elevation sighting.
+
+    :param pose: the pose the sighting was taken from
+    :param distance: measured distance to the landmark
+    :param azimuth: measured azimuth, relative to pose.yaw
+    :param elevation: measured elevation above the horizontal plane
+    :return: (x, y, z) estimate of the landmark position in the global frame
+    """
+    heading = pose.yaw + azimuth
+    horizontal = distance * np.cos(elevation)
+    return (
+        pose.x + horizontal * np.cos(heading),
+        pose.y + horizontal * np.sin(heading),
+        pose.z + distance * np.sin(elevation),
+    )
+
+
+def inverse_distance_azimuth_elevation_slam(
+    state_measurement: np.ndarray,
+) -> np.ndarray:
+    """Inverse model for 3D SLAM: [pose(6); landmarks; d; azimuth; elevation] -> (x, y, z).
+
+    :param state_measurement: SLAM state stacked with one [distance; azimuth; elevation]
+    :return: (3, 1) landmark position estimate in the global frame
+    """
+    pose = state_to_se3(state_measurement[0:6, 0])
+    distance, azimuth, elevation = state_measurement[-3:, 0]
+    x, y, z = initialize_landmark_estimate_3d(pose, distance, azimuth, elevation)
+    return np.array([[x], [y], [z]])
+
+
 def inverse_distance_azimuth_slam(state_measurement: np.ndarray) -> np.ndarray:
     """Inverse range-azimuth model for SLAM: [pose(6); landmarks; distance; azimuth] -> (x, y).
 
@@ -230,7 +273,7 @@ def inverse_distance_azimuth_map(
 def features_in_range(
     pose: SE3, features: list[Feature], max_range: float
 ) -> list[int]:
-    """Return the ids of the features within `max_range` (planar) of the pose.
+    """Return the ids of the features within `max_range` of the pose.
 
     :param pose: the observer pose
     :param features: candidate features
@@ -240,7 +283,8 @@ def features_in_range(
     return [
         feature.id
         for feature in features
-        if np.hypot(feature.x - pose.x, feature.y - pose.y) <= max_range
+        if np.linalg.norm([feature.x - pose.x, feature.y - pose.y, feature.z - pose.z])
+        <= max_range
     ]
 
 
@@ -332,6 +376,39 @@ def measure_distance_azimuth_slam(
     return np.reshape(merged, (len(merged), 1))
 
 
+def measure_distance_azimuth_elevation_slam(
+    state: np.ndarray,
+    args: tuple[list[int], int],
+    noise: np.ndarray | float | None = None,
+) -> np.ndarray:
+    """Range-azimuth-elevation model for 3D SLAM (pose and x/y/z landmarks in the state).
+
+    :param state: SLAM state vector - pose (0:6) followed by interleaved x/y/z triples
+    :param args: (observed feature ids, total number of landmarks)
+    :param noise: optional noise scale for the measurement
+    :return: stacked [distance, azimuth, elevation] measurements for the observed ids
+    """
+    feature_ids, num_landmarks = args
+    pose = state_to_se3(state[0:6, 0])
+    landmarks = state[6 : 6 + 3 * num_landmarks, 0].reshape(num_landmarks, 3)
+    ids = np.array(feature_ids)
+    dx = landmarks[ids, 0] - pose.x
+    dy = landmarks[ids, 1] - pose.y
+    dz = landmarks[ids, 2] - pose.z
+    horizontal = np.hypot(dx, dy)
+    distance = np.hypot(horizontal, dz)
+    azimuth = np.arctan2(dy, dx) - pose.yaw
+    elevation = np.arctan2(dz, horizontal)
+    if noise is not None:
+        angle_scale = noise / (1 + distance)
+        distance = distance + np.random.normal(0.0, noise, size=distance.shape)
+        azimuth = azimuth + np.random.normal(0.0, angle_scale, size=azimuth.shape)
+        elevation = elevation + np.random.normal(0.0, angle_scale, size=elevation.shape)
+
+    merged = np.array((distance, azimuth, elevation)).T.ravel()
+    return np.reshape(merged, (len(merged), 1))
+
+
 def step_dynamics_slam(state_control: np.ndarray, dt: float = DELTA_T) -> np.ndarray:
     """Motion model for full SLAM: the pose evolves per `step_dynamics`, landmarks are static.
 
@@ -346,24 +423,52 @@ def step_dynamics_slam(state_control: np.ndarray, dt: float = DELTA_T) -> np.nda
 
 
 def step_dynamics(state_control: np.ndarray, dt: float = DELTA_T) -> np.ndarray:
-    """Define the equations of motion.
+    """Define the equations of motion for controls [velocity, yaw rate].
 
-    :param state_control: the state and control vectors
+    :param state_control: the pose (6) stacked with the 2 controls
     :param dt: the time step
-    :return: the state vector after applying the motion equations
+    :return: the pose after applying the motion equations
     """
-    vel, omega = state_control[-2:]
-    dt_vel, dt_omega = vel[0] * dt, omega[0] * dt
+    no_pitch_rate = np.zeros((1, 1))
+    return step_dynamics_3d(
+        np.vstack((state_control[:6], state_control[-2:], no_pitch_rate)), dt=dt
+    )
+
+
+def step_dynamics_3d(state_control: np.ndarray, dt: float = DELTA_T) -> np.ndarray:
+    """Define the equations of motion for controls [velocity, yaw rate, pitch rate].
+
+    The vehicle moves along its heading, climbing or descending with its pitch.
+
+    :param state_control: the pose (6) stacked with the 3 controls
+    :param dt: the time step
+    :return: the pose after applying the motion equations
+    """
+    vel, yaw_rate, pitch_rate = state_control[-3:, 0]
     pose = state_to_se3(state_control[:6, 0])
 
     state_vec = np.zeros((6, 1))
-    state_vec[0, 0] = pose.x + dt_vel * np.cos(pose.yaw) * np.cos(pose.pitch)
-    state_vec[1, 0] = pose.y + dt_vel * np.sin(pose.yaw) * np.cos(pose.pitch)
-    state_vec[2, 0] = pose.z + dt_vel * np.sin(pose.pitch)
+    state_vec[0, 0] = pose.x + vel * dt * np.cos(pose.yaw) * np.cos(pose.pitch)
+    state_vec[1, 0] = pose.y + vel * dt * np.sin(pose.yaw) * np.cos(pose.pitch)
+    state_vec[2, 0] = pose.z + vel * dt * np.sin(pose.pitch)
     state_vec[3, 0] = pose.roll
-    state_vec[4, 0] = pose.pitch
-    state_vec[5, 0] = pose.yaw + dt_omega
+    state_vec[4, 0] = pose.pitch + pitch_rate * dt
+    state_vec[5, 0] = pose.yaw + yaw_rate * dt
     return state_vec
+
+
+def step_dynamics_slam_3d(state_control: np.ndarray, dt: float = DELTA_T) -> np.ndarray:
+    """Motion model for 3D SLAM: the pose evolves per `step_dynamics_3d`, landmarks are static.
+
+    :param state_control: pose, x/y/z landmarks, and the 3 controls stacked together
+    :param dt: the time step
+    :return: the next SLAM state vector
+    """
+    landmarks = state_control[6:-3, 0:1]
+    pose_vec = step_dynamics_3d(
+        np.vstack((state_control[:6], state_control[-3:])), dt=dt
+    )
+    return np.vstack((pose_vec, landmarks))
 
 
 class Sensor(Enum):
@@ -391,6 +496,7 @@ ANGLE_LAYOUTS: dict[Callable, tuple[int, tuple[int, ...]]] = {
     measure_distance_azimuth_map: (2, (1,)),
     measure_distance_azimuth_slam: (2, (1,)),
     measure_distance_azimuth_elevation: (3, (1, 2)),
+    measure_distance_azimuth_elevation_slam: (3, (1, 2)),
 }
 
 

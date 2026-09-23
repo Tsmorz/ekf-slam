@@ -25,6 +25,17 @@ class SlamScenario:
     radius_steps: int = 6
     num_loops: int = 3
     sensor_range: float = SENSOR_RANGE
+    # 3D: landmarks at heights drawn from `landmark_heights`, and a path whose altitude
+    # swings `altitude_swing` above and below `altitude` once per loop
+    three_d: bool = False
+    landmark_heights: tuple[float, float] = (0.0, 0.0)
+    altitude: float = 0.0
+    altitude_swing: float = 0.0
+
+    @property
+    def landmark_dim(self) -> int:
+        """Return the coordinates per landmark in the EKF state (2 planar, 3 in 3D)."""
+        return 3 if self.three_d else 2
 
     def make_map(self) -> Map:
         """Return landmarks spaced (with jitter) around the perimeter of the map square.
@@ -42,19 +53,29 @@ class SlamScenario:
         side = (arc // size).astype(int)
         points = corner[side] + direction[side] * (arc % size)[:, None]
         points += np.array(self.map_center) - size / 2
+        heights = np.zeros(self.num_landmarks)
+        if self.three_d:
+            heights = np.random.uniform(*self.landmark_heights, self.num_landmarks)
         return Map(
-            [Feature(id=i, x=float(x), y=float(y)) for i, (x, y) in enumerate(points)]
+            [
+                Feature(id=i, x=float(x), y=float(y), z=float(z))
+                for i, ((x, y), z) in enumerate(zip(points, heights, strict=True))
+            ]
         )
 
     def make_path(self) -> tuple[SE3, np.ndarray]:
-        """Return the loop's start pose and (N, 2) positions, centered on the map."""
+        """Return the loop's start pose and (N, 3) positions, centered on the map."""
         rpy = np.array([0.0, 0.0, self.heading])
         path = box_path(
             SE3(roll_pitch_yaw=rpy), self.side_steps, self.radius_steps, turn=self.turn
         )
         offset = np.array(self.map_center) - (path.min(axis=0) + path.max(axis=0)) / 2
-        start = SE3(xyz=np.array([offset[0], offset[1], 0.0]), roll_pitch_yaw=rpy)
-        return start, path + offset
+        phase = 2 * np.pi * np.arange(len(path)) / len(path)
+        altitude = self.altitude + self.altitude_swing * np.sin(phase)
+        start = SE3(
+            xyz=np.array([offset[0], offset[1], altitude[0]]), roll_pitch_yaw=rpy
+        )
+        return start, np.column_stack((path + offset, altitude))
 
 
 SCENARIOS: dict[str, SlamScenario] = {
@@ -102,6 +123,36 @@ SCENARIOS: dict[str, SlamScenario] = {
             description="The whole world sits far from the origin in negative x - "
             "catches code that assumes positions near (0, 0).",
             map_center=(-80.0, 45.0),
+        ),
+        SlamScenario(
+            name="baseline_3d",
+            description="3D: landmarks at heights of 0-8 m, and the robot climbs and "
+            "descends between 2 and 6 m every loop, sensing range, azimuth, and "
+            "elevation - pose and map are estimated in x, y, and z.",
+            three_d=True,
+            landmark_heights=(0.0, 8.0),
+            altitude=4.0,
+            altitude_swing=2.0,
+        ),
+        SlamScenario(
+            name="steep_3d",
+            description="3D with a tall map (0-12 m) and a 1-9 m altitude swing - "
+            "steep climbs and large elevation angles stress pitch and elevation.",
+            three_d=True,
+            landmark_heights=(0.0, 12.0),
+            sensor_range=13.0,
+            altitude=5.0,
+            altitude_swing=4.0,
+        ),
+        SlamScenario(
+            name="branch_cut_3d",
+            description="3D, starting facing -x so yaw and bearings sit on the +-pi "
+            "branch cut while elevation is also being estimated.",
+            three_d=True,
+            heading=np.pi,
+            landmark_heights=(0.0, 8.0),
+            altitude=4.0,
+            altitude_swing=2.0,
         ),
     ]
 }

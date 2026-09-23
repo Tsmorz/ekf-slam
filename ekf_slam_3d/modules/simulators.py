@@ -311,7 +311,10 @@ class SlamSimulator:
         ):
             import pyqtgraph as pg
 
+            # the plot is top-down, so draw each ray's horizontal extent
             distance = measurement[0::stride, 0]
+            if stride >= 3:
+                distance = distance * np.cos(measurement[2::stride, 0])
             azimuth = measurement[1::stride, 0]
             for dist, azi in zip(distance, azimuth, strict=False):
                 x1, x2 = pose.x, pose.x + dist * np.cos(pose.yaw + azi)

@@ -12,14 +12,117 @@ from ekf_slam_3d.data_classes.sensors import (
     distance_azimuth_covariance,
     features_in_range,
     initialize_landmark_estimate,
+    initialize_landmark_estimate_3d,
+    inverse_distance_azimuth_elevation_slam,
     inverse_distance_azimuth_map,
     inverse_distance_azimuth_slam,
     measure_distance_azimuth,
+    measure_distance_azimuth_elevation,
+    measure_distance_azimuth_elevation_slam,
     measure_distance_azimuth_map,
     measure_distance_azimuth_slam,
+    measure_elevation,
+    step_dynamics,
+    step_dynamics_3d,
     step_dynamics_map,
     step_dynamics_slam,
+    step_dynamics_slam_3d,
 )
+
+
+def test_measure_elevation_is_angle_above_the_horizontal() -> None:
+    """Test that elevation ignores heading and doesn't flip when a feature is behind."""
+    # Arrange
+    pose = SE3(roll_pitch_yaw=np.array([0.0, 0.0, 2.0]))
+    features = [
+        Feature(id=0, x=3.0, y=4.0, z=5.0),
+        Feature(id=1, x=-3.0, y=-4.0, z=-5.0),
+    ]
+
+    # Act
+    elevation = measure_elevation(pose.as_vector(), features)
+
+    # Assert
+    np.testing.assert_array_almost_equal(elevation[:, 0], [np.pi / 4, -np.pi / 4])
+
+
+def test_3d_sighting_round_trip() -> None:
+    """Test that a range-azimuth-elevation sighting inverts back to the landmark."""
+    # Arrange
+    pose = SE3(xyz=np.array([1.0, 2.0, 3.0]), roll_pitch_yaw=np.array([0.0, 0.1, 0.5]))
+    feature = Feature(id=0, x=6.0, y=-3.0, z=7.5)
+    sighting = measure_distance_azimuth_elevation(pose.as_vector(), [feature])
+    landmarks = np.zeros((6, 1))
+
+    # Act
+    xyz = initialize_landmark_estimate_3d(pose, *sighting[:, 0])
+    from_slam = inverse_distance_azimuth_elevation_slam(
+        np.vstack((pose.as_vector(), landmarks, sighting))
+    )
+
+    # Assert
+    np.testing.assert_array_almost_equal(xyz, [6.0, -3.0, 7.5])
+    np.testing.assert_array_almost_equal(from_slam, [[6.0], [-3.0], [7.5]])
+
+
+def test_3d_slam_measurement_matches_the_known_map_sensor() -> None:
+    """Test that the 3D SLAM model reads landmarks out of the state consistently."""
+    # Arrange
+    pose = SE3(xyz=np.array([1.0, 1.0, 2.0]), roll_pitch_yaw=np.array([0.0, 0.0, 0.3]))
+    features = [Feature(id=0, x=4.0, y=5.0, z=6.0), Feature(id=1, x=10.0, y=1.0, z=0.0)]
+    landmarks = np.array([[f.x, f.y, f.z] for f in features]).reshape(-1, 1)
+
+    # Act
+    from_state = measure_distance_azimuth_elevation_slam(
+        np.vstack((pose.as_vector(), landmarks)), args=([1, 0], 2)
+    )
+    from_map = measure_distance_azimuth_elevation(pose.as_vector(), features[::-1])
+
+    # Assert
+    np.testing.assert_array_almost_equal(from_state, from_map)
+
+
+def test_step_dynamics_3d_climbs_with_pitch() -> None:
+    """Test that the 3D motion model climbs along its pitch and applies pitch rate."""
+    # Arrange
+    pose = SE3(roll_pitch_yaw=np.array([0.0, np.pi / 6, 0.0]))
+    controls = np.array([[2.0], [0.1], [0.05]])
+
+    # Act
+    result = step_dynamics_3d(np.vstack((pose.as_vector(), controls)), dt=1.0)
+
+    # Assert
+    np.testing.assert_array_almost_equal(
+        result[:, 0], [2.0 * np.cos(np.pi / 6), 0.0, 1.0, 0.0, np.pi / 6 + 0.05, 0.1]
+    )
+
+
+def test_planar_dynamics_is_3d_dynamics_without_pitch_rate() -> None:
+    """Test that the 2-control model matches the 3D one with zero pitch rate."""
+    # Arrange
+    pose = SE3(xyz=np.array([1.0, 2.0, 3.0]), roll_pitch_yaw=np.array([0.0, 0.2, 0.7]))
+    controls = np.array([[1.5], [0.3]])
+
+    # Act
+    planar = step_dynamics(np.vstack((pose.as_vector(), controls)))
+    spatial = step_dynamics_3d(np.vstack((pose.as_vector(), controls, [[0.0]])))
+
+    # Assert
+    np.testing.assert_array_almost_equal(planar, spatial)
+
+
+def test_step_dynamics_slam_3d_moves_pose_and_freezes_landmarks() -> None:
+    """Test that the 3D SLAM motion model steps the pose but not the landmarks."""
+    # Arrange
+    landmarks = np.array([[4.0], [5.0], [6.0]])
+    controls = np.array([[1.0], [0.0], [0.0]])
+
+    # Act
+    result = step_dynamics_slam_3d(np.vstack((SE3().as_vector(), landmarks, controls)))
+
+    # Assert
+    np.testing.assert_array_almost_equal(result[0:3, 0], [1.0, 0.0, 0.0])
+    np.testing.assert_array_almost_equal(result[6:], landmarks)
 
 
 def test_angle_mask_marks_interleaved_angles() -> None:
@@ -40,6 +143,10 @@ def test_default_angle_mask_follows_each_sensors_layout() -> None:
     )
     np.testing.assert_array_equal(
         default_angle_mask(measure_distance_azimuth_slam, 4), [False, True, False, True]
+    )
+    np.testing.assert_array_equal(
+        default_angle_mask(measure_distance_azimuth_elevation_slam, 3),
+        [False, True, True],
     )
     assert default_angle_mask(Sensor.GPS.func, 3) is None
 
@@ -72,6 +179,29 @@ def test_features_in_range() -> None:
     # Act / Assert
     assert features_in_range(SE3(), features, max_range=5.0) == [0]
     assert features_in_range(SE3(), features, max_range=10.0) == [0, 1]
+
+
+def test_features_in_range_counts_height() -> None:
+    """Test that sensing range is a 3D distance."""
+    # Arrange
+    features = [Feature(id=0, x=3.0, y=4.0, z=12.0)]
+
+    # Act / Assert
+    assert features_in_range(SE3(), features, max_range=10.0) == []
+    assert features_in_range(SE3(), features, max_range=13.0) == [0]
+
+
+def test_distance_azimuth_elevation_covariance() -> None:
+    """Test that both angles of a [d, az, el] triple get the distance-scaled variance."""
+    # Act
+    covariance = distance_azimuth_covariance(
+        np.array([[4.0], [0.3], [0.1]]), noise=0.1, stride=3
+    )
+
+    # Assert
+    np.testing.assert_array_almost_equal(
+        np.diag(covariance), [0.01, (0.1 / 5) ** 2, (0.1 / 5) ** 2]
+    )
 
 
 def test_inverse_models_invert_a_sighting() -> None:
