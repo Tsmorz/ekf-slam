@@ -121,7 +121,7 @@ def wrap_to_pi[T: (np.ndarray, float)](angle: T) -> T:
     which would otherwise be treated as a huge, spurious correction.
 
     :param angle: array of angles in radians
-    :return: angles wrapped to (-pi, pi]
+    :return: angles wrapped to [-pi, pi)
     """
     return (angle + np.pi) % (2 * np.pi) - np.pi
 

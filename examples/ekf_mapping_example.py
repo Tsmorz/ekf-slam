@@ -12,7 +12,6 @@ from config.definitions import (
 from ekf_slam_3d.data_classes.lie_algebra import SE3
 from ekf_slam_3d.data_classes.map import Map, make_box_map_planar
 from ekf_slam_3d.data_classes.sensors import (
-    angle_mask,
     distance_azimuth_covariance,
     inverse_distance_azimuth_map,
     measure_distance_azimuth,
@@ -48,7 +47,7 @@ def pipeline(
         initial_x=np.zeros((2 * num_features, 1)),
         initial_covariance=LANDMARK_INIT_VARIANCE * np.eye(2 * num_features),
         process_noise=np.zeros((1, 1)),
-        measurement_noise=MEASUREMENT_NOISE,
+        measurement_noise=MEASUREMENT_NOISE**2,
     )
 
     # the ground-truth pose is driven directly - the mapping EKF never sees it perturbed
@@ -104,8 +103,7 @@ def pipeline(
                 u=np.zeros((1, 1)),
                 measurement_args=(true_pose, observed, num_features),
                 spec=MeasurementSpec(
-                    covariance=distance_azimuth_covariance(meas, MEASUREMENT_NOISE),
-                    angle_mask=angle_mask(len(meas), stride=2, offsets=(1,)),
+                    covariance=distance_azimuth_covariance(meas, MEASUREMENT_NOISE)
                 ),
             )
 

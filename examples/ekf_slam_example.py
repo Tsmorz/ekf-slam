@@ -11,12 +11,12 @@ from config.definitions import (
     LANDMARK_INIT_VARIANCE,
     LOG_DECIMALS,
     MEASUREMENT_NOISE,
+    ROBOT_SPEED,
     START_POSE_VARIANCE,
 )
 from ekf_slam_3d.data_classes.lie_algebra import SE3, state_to_se3
 from ekf_slam_3d.data_classes.map import Map
 from ekf_slam_3d.data_classes.sensors import (
-    angle_mask,
     distance_azimuth_covariance,
     features_in_range,
     inverse_distance_azimuth_slam,
@@ -30,8 +30,6 @@ from ekf_slam_3d.modules.kalman_extended import ExtendedKalmanFilter, Measuremen
 from ekf_slam_3d.modules.simulators import LandmarkEstimate, SlamSimulator
 from ekf_slam_3d.modules.state_space import StateSpaceNonlinear
 from examples.slam_scenarios import SCENARIOS, SlamScenario
-
-SPEED = 1.0
 
 
 @dataclass
@@ -116,8 +114,7 @@ def sense(
             u=control,
             measurement_args=(known, len(features)),
             spec=MeasurementSpec(
-                covariance=distance_azimuth_covariance(z, MEASUREMENT_NOISE),
-                angle_mask=angle_mask(len(z), stride=2, offsets=(1,)),
+                covariance=distance_azimuth_covariance(z, MEASUREMENT_NOISE)
             ),
         )
 
@@ -166,7 +163,7 @@ def pipeline(
         initial_x=initial_x,
         initial_covariance=initial_cov,
         process_noise=CONTROL_NOISE_COVARIANCE,
-        measurement_noise=MEASUREMENT_NOISE,
+        measurement_noise=MEASUREMENT_NOISE**2,
     )
     sim = SlamSimulator(
         state_space_nl=StateSpaceNonlinear(motion_model=step_dynamics),
@@ -184,8 +181,8 @@ def pipeline(
         # sense before the first move, so the map is anchored to the known start pose
         if step > 0:
             pose_estimate = state_to_se3(ekf.x[0:6, 0])
-            turn_rate = pure_pursuit_turn_rate(pose_estimate, path, speed=SPEED)
-            control = np.array([[SPEED], [turn_rate]])
+            turn_rate = pure_pursuit_turn_rate(pose_estimate, path)
+            control = np.array([[ROBOT_SPEED], [turn_rate]])
             sim.step(u=control)
             ekf.predict(u=control)
 

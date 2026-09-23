@@ -6,8 +6,10 @@ from scipy.signal import place_poles
 
 from config.definitions import (
     DEFAULT_NUM_STEPS,
+    DELTA_T,
     MAX_TURN_RATE,
     PURE_PURSUIT_LOOKAHEAD_STEPS,
+    ROBOT_SPEED,
 )
 from ekf_slam_3d.data_classes.lie_algebra import SE3
 from ekf_slam_3d.data_classes.sensors import step_dynamics
@@ -129,7 +131,7 @@ def box_path(
     side_steps: int,
     radius_steps: int,
     turn: int = 1,
-    speed: float = 1.0,
+    speed: float = ROBOT_SPEED,
 ) -> np.ndarray:
     """Return the positions of one noise-free loop of a rounded box path.
 
@@ -137,10 +139,11 @@ def box_path(
     :param side_steps: straight steps per side
     :param radius_steps: steps per rounded 90 degree corner
     :param turn: +1 for counterclockwise loops, -1 for clockwise
-    :param speed: forward distance per step
+    :param speed: forward speed
     :return: (N, 2) array of path positions, N = 4 * (side_steps + radius_steps)
     """
-    one_side = side_steps * [0.0] + radius_steps * [turn * np.pi / 2 / radius_steps]
+    corner_rate = turn * np.pi / 2 / (radius_steps * DELTA_T)
+    one_side = side_steps * [0.0] + radius_steps * [corner_rate]
     state = start.as_vector()
     points = [[start.x, start.y]]
     for turn_rate in 4 * one_side:
@@ -153,7 +156,7 @@ def pure_pursuit_turn_rate(
     pose: SE3,
     path: np.ndarray,
     lookahead_steps: int = PURE_PURSUIT_LOOKAHEAD_STEPS,
-    speed: float = 1.0,
+    speed: float = ROBOT_SPEED,
     max_turn_rate: float = MAX_TURN_RATE,
 ) -> float:
     """Return the turn rate that steers `pose` along a closed path (pure pursuit).
@@ -161,9 +164,9 @@ def pure_pursuit_turn_rate(
     :param pose: the pose to steer from (in practice the filter's estimate)
     :param path: (N, 2) closed-loop path positions
     :param lookahead_steps: how many path points past the nearest one to aim at
-    :param speed: forward distance per step
-    :param max_turn_rate: turn rate limit (rad per step)
-    :return: turn rate command
+    :param speed: forward speed
+    :param max_turn_rate: turn rate limit
+    :return: turn rate command (rad per unit time)
     """
     nearest = int(np.argmin(np.hypot(path[:, 0] - pose.x, path[:, 1] - pose.y)))
     target = path[(nearest + lookahead_steps) % len(path)]

@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 
 from config.definitions import DEFAULT_CONTROL
+from ekf_slam_3d.data_classes.sensors import default_angle_mask
 from ekf_slam_3d.modules.math_utils import symmetrize_matrix, wrap_to_pi
 from ekf_slam_3d.modules.state_space import StateSpaceLinear, StateSpaceNonlinear
 
@@ -19,7 +20,8 @@ class MeasurementSpec:
     :param angle_mask: boolean mask, True at angle-valued entries of `z` (e.g. azimuth,
         elevation). Those innovation entries are wrapped to [-pi, pi) so a
         measurement/prediction pair straddling the atan2 branch cut isn't treated as a
-        huge, spurious correction.
+        huge, spurious correction. Defaults to the sensor's entry in
+        `sensors.ANGLE_LAYOUTS`, so it only needs passing for unregistered sensors.
     """
 
     covariance: np.ndarray | None = None
@@ -43,6 +45,8 @@ class ExtendedKalmanFilter:
         :param initial_x: Initial state estimate
         :param initial_covariance: Initial error covariance
         :param process_noise: Process noise covariance
+        :param measurement_noise: measurement noise variance (R = measurement_noise * I
+            unless `update()` is given an explicit covariance)
         :return: None
         """
         self.state_space_nonlinear = state_space_nonlinear
@@ -84,18 +88,12 @@ class ExtendedKalmanFilter:
         :return: Updated state estimate and state covariance
         """
         spec = spec or MeasurementSpec()
-        A, B = self.state_space_nonlinear.linearize(
-            model=self.state_space_nonlinear.motion_model,
-            x=self.x,
-            u=u,
-        )
-        C, D = self.state_space_nonlinear.linearize(
+        C, _ = self.state_space_nonlinear.linearize(
             model=sensor,
             x=self.x,
             u=u,
             other_args=measurement_args,
         )
-        state_space = StateSpaceLinear(A, B, C, D)
 
         predict_z = (
             sensor(self.x)
@@ -104,14 +102,17 @@ class ExtendedKalmanFilter:
         )
 
         innovation = z - predict_z
-        if spec.angle_mask is not None:
-            innovation[spec.angle_mask] = wrap_to_pi(innovation[spec.angle_mask])
+        mask = spec.angle_mask
+        if mask is None:
+            mask = default_angle_mask(sensor, len(z))
+        if mask is not None:
+            innovation[mask] = wrap_to_pi(innovation[mask])
 
         R = self._measurement_covariance(z, spec.covariance)
-        S = state_space.C @ self.cov @ state_space.C.T + R
-        K = self.cov @ state_space.C.T @ np.linalg.inv(S)
+        S = C @ self.cov @ C.T + R
+        K = self.cov @ C.T @ np.linalg.inv(S)
         self.x = self.x + K @ innovation
-        cov = (np.eye(self.cov.shape[0]) - K @ state_space.C) @ self.cov
+        cov = (np.eye(self.cov.shape[0]) - K @ C) @ self.cov
         self.cov = symmetrize_matrix(cov)
 
     def initialize_from_measurement(

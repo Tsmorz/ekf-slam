@@ -183,24 +183,30 @@ def test_extended_kalman_filter_update_wraps_azimuth_across_branch_cut() -> None
     measured_azimuth = -np.pi + 0.02
     z = np.array([[predict_z[0, 0]], [measured_azimuth]])
     mask = angle_mask(len(z), stride=2, offsets=(1,))
+    u = np.zeros((2, 1))
+
+    def unregistered_sensor(state: np.ndarray, args: tuple) -> np.ndarray:
+        return measure_distance_azimuth_slam(state, args)
 
     # Act
-    ekf_wrapped = make_ekf()
+    ekf_default = make_ekf()
+    ekf_explicit = make_ekf()
     ekf_unwrapped = make_ekf()
-    ekf_wrapped.update(
+    ekf_default.update(
+        z=z, sensor=measure_distance_azimuth_slam, u=u, measurement_args=([0], 1)
+    )
+    ekf_explicit.update(
         z=z,
-        sensor=measure_distance_azimuth_slam,
-        u=np.zeros((2, 1)),
+        sensor=unregistered_sensor,
+        u=u,
         measurement_args=([0], 1),
         spec=MeasurementSpec(angle_mask=mask),
     )
     ekf_unwrapped.update(
-        z=z,
-        sensor=measure_distance_azimuth_slam,
-        u=np.zeros((2, 1)),
-        measurement_args=([0], 1),
+        z=z, sensor=unregistered_sensor, u=u, measurement_args=([0], 1)
     )
 
-    # Assert
-    assert abs(ekf_wrapped.x[5, 0]) < 0.5
+    # Assert: registered sensors wrap by default; an unregistered one needs the mask
+    assert abs(ekf_default.x[5, 0]) < 0.5
+    assert abs(ekf_explicit.x[5, 0]) < 0.5
     assert abs(ekf_unwrapped.x[5, 0]) > 1.0

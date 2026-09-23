@@ -6,7 +6,9 @@ import pytest
 from ekf_slam_3d.data_classes.lie_algebra import SE3
 from ekf_slam_3d.data_classes.map import Feature
 from ekf_slam_3d.data_classes.sensors import (
+    Sensor,
     angle_mask,
+    default_angle_mask,
     distance_azimuth_covariance,
     features_in_range,
     initialize_landmark_estimate,
@@ -27,6 +29,19 @@ def test_angle_mask_marks_interleaved_angles() -> None:
 
     # Assert
     np.testing.assert_array_equal(mask, [False, True, True, False, True, True])
+
+
+def test_default_angle_mask_follows_each_sensors_layout() -> None:
+    """Test that registered sensors get their angle mask and others get none."""
+    # Act / Assert
+    np.testing.assert_array_equal(
+        default_angle_mask(Sensor.DIST_AZI_ELE.func, 6),
+        [False, True, True, False, True, True],
+    )
+    np.testing.assert_array_equal(
+        default_angle_mask(measure_distance_azimuth_slam, 4), [False, True, False, True]
+    )
+    assert default_angle_mask(Sensor.GPS.func, 3) is None
 
 
 def test_distance_azimuth_covariance_matches_simulated_noise() -> None:

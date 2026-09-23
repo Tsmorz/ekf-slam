@@ -147,11 +147,12 @@ def distance_azimuth_covariance(readings: np.ndarray, noise: float) -> np.ndarra
     """Return the covariance of the noise `measure_distance_azimuth` adds to `readings`.
 
     `noise` is a standard deviation: distance gets `noise`, and azimuth gets
-    `noise / (1 + distance)`.
+    `noise / (1 + distance)`. The simulator scales by the true distance, which a
+    filter can't know, so the measured distance stands in for it here.
 
     :param readings: stacked [distance, azimuth] pairs
     :param noise: the noise scale passed to `measure_distance_azimuth`
-    :return: diagonal covariance matching the simulated sensor
+    :return: diagonal covariance approximating the simulated sensor's
     """
     variances = np.empty(len(readings))
     variances[0::2] = noise**2
@@ -162,9 +163,8 @@ def distance_azimuth_covariance(readings: np.ndarray, noise: float) -> np.ndarra
 def angle_mask(length: int, stride: int, offsets: tuple[int, ...]) -> np.ndarray:
     """Build a boolean mask marking the angle-valued entries of an interleaved measurement.
 
-    Passed as `MeasurementSpec.angle_mask` to `ExtendedKalmanFilter.update()` so
-    azimuth/elevation innovations get wrapped to [-pi, pi) instead of the raw
-    (possibly ~2*pi) difference.
+    `ExtendedKalmanFilter.update()` wraps these innovation entries to [-pi, pi)
+    instead of using the raw (possibly ~2*pi) difference.
 
     :param length: total length of the measurement vector
     :param stride: number of values per group (e.g. 2 for [distance, azimuth] pairs)
@@ -381,3 +381,28 @@ class Sensor(Enum):
     ELE = auto(), measure_elevation
     AZI = auto(), measure_azimuth
     DIST_AZI_ELE = auto(), measure_distance_azimuth_elevation
+
+
+# (stride, angle-valued offsets within each group) of each measurement function's output
+ANGLE_LAYOUTS: dict[Callable, tuple[int, tuple[int, ...]]] = {
+    measure_azimuth: (1, (0,)),
+    measure_elevation: (1, (0,)),
+    measure_distance_azimuth: (2, (1,)),
+    measure_distance_azimuth_map: (2, (1,)),
+    measure_distance_azimuth_slam: (2, (1,)),
+    measure_distance_azimuth_elevation: (3, (1, 2)),
+}
+
+
+def default_angle_mask(sensor: Callable, length: int) -> np.ndarray | None:
+    """Return the angle mask for a known measurement function's output, if it has angles.
+
+    :param sensor: the measurement function
+    :param length: length of the measurement vector
+    :return: boolean mask of angle-valued entries, or None if the sensor has none
+    """
+    layout = ANGLE_LAYOUTS.get(sensor)
+    if layout is None:
+        return None
+    stride, offsets = layout
+    return angle_mask(length, stride, offsets)

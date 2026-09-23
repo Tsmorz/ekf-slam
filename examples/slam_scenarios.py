@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from config.definitions import SENSOR_RANGE
+from config.definitions import LANDMARK_JITTER_FRACTION, SENSOR_RANGE
 from ekf_slam_3d.data_classes.lie_algebra import SE3
 from ekf_slam_3d.data_classes.map import Feature, Map
 from ekf_slam_3d.modules.controller import box_path
@@ -34,7 +34,8 @@ class SlamScenario:
         """
         size = self.map_size
         spacing = 4 * size / self.num_landmarks
-        jitter = np.random.uniform(-0.3, 0.3, self.num_landmarks) * spacing
+        jitter_range = LANDMARK_JITTER_FRACTION * spacing
+        jitter = np.random.uniform(-jitter_range, jitter_range, self.num_landmarks)
         arc = ((np.arange(self.num_landmarks) + 0.5) * spacing + jitter) % (4 * size)
         corner = np.array([[0.0, 0.0], [size, 0.0], [size, size], [0.0, size]])
         direction = np.array([[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]])

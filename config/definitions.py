@@ -52,7 +52,10 @@ SENSOR_RANGE = 10.0
 # the start pose defines the map frame, so it is known (almost) exactly
 START_POSE_VARIANCE = 1e-6
 
+LANDMARK_JITTER_FRACTION = 0.3
+
 # path following (pure pursuit on the EKF pose estimate)
+ROBOT_SPEED = 1.0
 PURE_PURSUIT_LOOKAHEAD_STEPS = 3
 MAX_TURN_RATE = np.pi / 4
 
